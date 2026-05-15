@@ -71,8 +71,8 @@ impl Index {
         id
     }
 
-    /// Add or update an entry in the index.
-    pub fn upsert_entry(&mut self, entry: IndexEntry) {
+    /// Insert a new entry or replace the existing entry with the same ID.
+    pub fn insert_or_replace_entry(&mut self, entry: IndexEntry) {
         if let Some(existing) = self.entries.iter_mut().find(|e| e.id == entry.id) {
             *existing = entry;
         } else {
@@ -133,11 +133,11 @@ mod tests {
     }
 
     #[test]
-    fn test_upsert_entry_insert() {
+    fn test_insert_or_replace_entry_inserts_new_id() {
         let mut index = Index::new();
         let entry = make_entry("K-000001", "Test Entry");
 
-        index.upsert_entry(entry);
+        index.insert_or_replace_entry(entry);
 
         assert_eq!(index.entries.len(), 1);
         assert_eq!(index.entries[0].id, "K-000001");
@@ -145,21 +145,21 @@ mod tests {
     }
 
     #[test]
-    fn test_upsert_entry_update() {
+    fn test_insert_or_replace_entry_replaces_matching_id() {
         let mut index = Index::new();
-        index.upsert_entry(make_entry("K-000001", "Original"));
-        index.upsert_entry(make_entry("K-000001", "Updated"));
+        index.insert_or_replace_entry(make_entry("K-000001", "Original"));
+        index.insert_or_replace_entry(make_entry("K-000001", "Updated"));
 
         assert_eq!(index.entries.len(), 1);
         assert_eq!(index.entries[0].title, "Updated");
     }
 
     #[test]
-    fn test_upsert_multiple_entries() {
+    fn test_insert_or_replace_entry_keeps_distinct_ids() {
         let mut index = Index::new();
-        index.upsert_entry(make_entry("K-000001", "First"));
-        index.upsert_entry(make_entry("K-000002", "Second"));
-        index.upsert_entry(make_entry("K-000003", "Third"));
+        index.insert_or_replace_entry(make_entry("K-000001", "First"));
+        index.insert_or_replace_entry(make_entry("K-000002", "Second"));
+        index.insert_or_replace_entry(make_entry("K-000003", "Third"));
 
         assert_eq!(index.entries.len(), 3);
     }
@@ -167,7 +167,7 @@ mod tests {
     #[test]
     fn test_remove_entry_exists() {
         let mut index = Index::new();
-        index.upsert_entry(make_entry("K-000001", "Test"));
+        index.insert_or_replace_entry(make_entry("K-000001", "Test"));
 
         let removed = index.remove_entry("K-000001");
 
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn test_remove_entry_not_exists() {
         let mut index = Index::new();
-        index.upsert_entry(make_entry("K-000001", "Test"));
+        index.insert_or_replace_entry(make_entry("K-000001", "Test"));
 
         let removed = index.remove_entry("K-999999");
 
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn test_index_serialization() {
         let mut index = Index::new();
-        index.upsert_entry(make_entry("K-000001", "Test"));
+        index.insert_or_replace_entry(make_entry("K-000001", "Test"));
 
         let yaml = serde_yaml::to_string(&index).unwrap();
         let parsed: Index = serde_yaml::from_str(&yaml).unwrap();

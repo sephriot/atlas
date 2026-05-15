@@ -38,8 +38,8 @@ atlas search "error handling" --page-size 10
 # Fetch a full atom
 atlas get sephriot/atlas/K-000001
 
-# Record a short atom
-atlas upsert \
+# Create a short atom
+atlas create \
   --title "API clients require explicit timeouts" \
   --type gotcha \
   --confidence high \
@@ -65,10 +65,10 @@ printf '%s\n' K-000001 K-000002 | atlas get -
 
 # Use stdin as the summary when --summary is omitted
 printf '%s\n' "Remember to regenerate snapshots after parser changes." \
-  | atlas upsert --title "Parser snapshots" --type gotcha --confidence medium --tag parser
+  | atlas create --title "Parser snapshots" --type gotcha --confidence medium --tag parser
 
 # Use stdin as details when --summary is set
-cat notes.md | atlas upsert \
+cat notes.md | atlas create \
   --title "GraphQL resolver convention" \
   --type recipe \
   --confidence high \
@@ -83,7 +83,8 @@ cat notes.md | atlas upsert \
 | `search` / `find` | Search atoms by query, type, tags, confidence |
 | `get` / `read` | Get one or more full atoms by ID |
 | `atoms` / `list` | List atoms with optional filters |
-| `upsert` / `record` | Create or update an atom |
+| `create` | Create a new atom |
+| `update` | Update an existing atom by ID |
 | `delete` | Delete an atom |
 | `link` | Create a directed link between atoms |
 | `unlink` | Remove a directed link |
@@ -91,6 +92,9 @@ cat notes.md | atlas upsert \
 | `context` | Show detected org/project context |
 | `instructions` | Print agent instructions for using Atlas |
 | `enable-local` | Use repo-local `.atlas/` storage for a project |
+
+Updates are explicit: use `atlas update --id <atom-id> ...`. Atlas does not match
+atoms by title because titles are mutable metadata, not stable identity.
 
 Global options:
 

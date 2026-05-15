@@ -34,7 +34,7 @@ Recording to the wrong project makes knowledge unfindable.
 
 1. **Search first** - Avoid duplicates with `atlas search <query>` or pipe generated notes into `atlas search`
 2. **Evaluate** - Is this reusable, non-obvious, stable, actionable?
-3. **Create atom** with `atlas upsert`, preferring stdin for long or already-generated text:
+3. **Create atom** with `atlas create`, or revise an existing atom with `atlas update --id <id>`, preferring stdin for long or already-generated text:
    - `--title`: Clear, searchable name
    - `--type`: gotcha, recipe, decision, or note
    - `--summary`: Short one-line summary; omit it to read summary from stdin
@@ -50,10 +50,11 @@ Use shell pipelines as the default path when recording anything longer than a se
 
 Atlas stdin behavior:
 - `atlas search` with no query reads the query from stdin
-- `atlas upsert` with no `--summary` reads stdin as the summary
-- `atlas upsert --summary "..."` reads piped stdin as `details`
-- `atlas upsert --summary -` reads stdin as the summary explicitly
+- `atlas create` with no `--summary` reads stdin as the summary
+- `atlas create --summary "..."` reads piped stdin as `details`
+- `atlas create --summary -` reads stdin as the summary explicitly
 - Only one of `--summary -` or `--details -` should consume stdin
+- Updates require `atlas update --id <atom-id> ...`; titles are not used for identity.
 
 ## CLI Commands
 
@@ -69,7 +70,7 @@ printf '%s\n' "$LEARNING" | atlas search --page-size 5
 
 **Create new atom:**
 ```bash
-atlas upsert \
+atlas create \
   --title "API rate limits require exponential backoff" \
   --type gotcha \
   --confidence high \
@@ -81,7 +82,7 @@ atlas upsert \
 **Create summary from stdin:**
 ```bash
 printf '%s\n' "External API calls must use exponential backoff after 429s." \
-  | atlas upsert \
+  | atlas create \
       --title "API rate limits require exponential backoff" \
       --type gotcha \
       --confidence high \
@@ -91,7 +92,7 @@ printf '%s\n' "External API calls must use exponential backoff after 429s." \
 
 **Create details from stdin:**
 ```bash
-cat notes.md | atlas upsert \
+cat notes.md | atlas create \
   --title "API rate limits require exponential backoff" \
   --type gotcha \
   --confidence high \
@@ -101,7 +102,7 @@ cat notes.md | atlas upsert \
 
 **Capture command output as details:**
 ```bash
-git show --stat --oneline HEAD | atlas upsert \
+git show --stat --oneline HEAD | atlas create \
   --title "Recent migration shape" \
   --type note \
   --confidence medium \

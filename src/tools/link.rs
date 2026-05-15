@@ -122,7 +122,7 @@ pub fn link(req: LinkRequest) -> Result<LinkResponse, AtlasError> {
 
     // Update index
     let mut index = load_index(&source_ref.org, &source_ref.project)?;
-    index.upsert_entry(IndexEntry::from_atom(&source_atom));
+    index.insert_or_replace_entry(IndexEntry::from_atom(&source_atom));
     save_index(&source_ref.org, &source_ref.project, &index)?;
 
     Ok(LinkResponse {
@@ -170,7 +170,7 @@ pub fn unlink(req: LinkRequest) -> Result<UnlinkResponse, AtlasError> {
 
         // Update index
         let mut index = load_index(&source_ref.org, &source_ref.project)?;
-        index.upsert_entry(IndexEntry::from_atom(&source_atom));
+        index.insert_or_replace_entry(IndexEntry::from_atom(&source_atom));
         save_index(&source_ref.org, &source_ref.project, &index)?;
 
         true

@@ -59,7 +59,7 @@ For each potential atom, assess against quality criteria. Only proceed if knowle
 
 ### 5. Record Knowledge
 
-Create the atom using Atlas upsert with:
+Create the atom using `atlas create` with:
 - `title`: The proposed title
 - `type`: gotcha, recipe, decision, or note
 - `summary`: The explanation
@@ -101,7 +101,8 @@ Use these Atlas operations:
 |-----------|-------------|
 | `search` | Find existing atoms before creating new ones |
 | `get` | Read full content of a relevant atom |
-| `upsert` | Create new atom (after user confirmation) |
+| `create` | Create a new atom (after user confirmation) |
+| `update` | Update an existing atom by ID |
 | `atoms` | Browse atoms by type or tags |
 | `link` | Connect related atoms |
 | `unlink` | Remove connections between atoms |

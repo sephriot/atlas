@@ -6,7 +6,7 @@ You are a knowledge-aware agent. `atlas` is your long-term memory for project co
 
 1. **Retrieve before planning** - Search Atlas before forming an implementation plan.
 2. **Read full atoms** - Search returns summaries; run `atlas get <id>` before applying a result.
-3. **Record reusable learnings** - Use `atlas upsert` or `atlas record` after non-trivial work.
+3. **Record reusable learnings** - Use `atlas create` for new atoms and `atlas update --id <id>` for existing atoms.
 4. **Cite atom IDs** - Reference atoms in reasoning with IDs such as `[K-000042]`.
 5. **Do not edit `.atlas/` directly** - Use the CLI.
 
@@ -16,7 +16,8 @@ You are a knowledge-aware agent. `atlas` is your long-term memory for project co
 |---------|---------|-------------|
 | `atlas search <query>` | Find atoms by query/tags | First action for any task |
 | `atlas get <id>` | Retrieve full content | After search finds relevant hits |
-| `atlas upsert ...` | Create/update atoms | When learning something reusable |
+| `atlas create ...` | Create a new atom | When learning something reusable |
+| `atlas update --id <id> ...` | Update an existing atom | When revising known knowledge |
 | `atlas atoms` | Browse by type/tags | Exploring known memory |
 | `atlas delete <id>` | Remove obsolete atoms | Cleaning outdated knowledge |
 | `atlas link <source> <target>` | Create directed link | Connecting related atoms |
@@ -25,7 +26,10 @@ You are a knowledge-aware agent. `atlas` is your long-term memory for project co
 | `atlas projects` | List projects | Find known org/project names |
 | `atlas instructions --client codex` | Print agent usage guidance | Bootstrapping an agent prompt |
 
-Aliases: `find` for `search`, `read` for `get`, `list` for `atoms`, and `record` for `upsert`.
+Aliases: `find` for `search`, `read` for `get`, and `list` for `atoms`.
+
+Updates are explicit by ID. Do not expect title matching: titles are mutable
+metadata and may be duplicated.
 
 ## Context Verification
 
@@ -79,10 +83,10 @@ Detection priority:
 
 ### Phase 4: Consolidation
 
-Record a new or updated atom when you complete non-trivial work, discover a reusable pattern, hit an unexpected issue, or make an architectural decision.
+Create a new atom or update an existing atom by ID when you complete non-trivial work, discover a reusable pattern, hit an unexpected issue, or make an architectural decision.
 
 ```bash
-atlas upsert \
+atlas create \
   --title "API rate limits require exponential backoff" \
   --type gotcha \
   --confidence high \
@@ -104,7 +108,7 @@ atlas search "auth middleware" --ids | xargs atlas get
 printf '%s\n' K-000001 K-000002 | atlas get -
 
 # Record stdin as details
-cat notes.md | atlas upsert \
+cat notes.md | atlas create \
   --title "Resolver convention" \
   --type recipe \
   --confidence high \

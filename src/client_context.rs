@@ -57,7 +57,7 @@ WORKFLOW (optimized for Claude Code):
 1. SEARCH first - Run `atlas search "<query>"` before planning work
 2. READ full atoms - Run `atlas get <id>` for each relevant result
 3. APPLY knowledge - Let retrieved atoms constrain your approach
-4. RECORD learnings - After completing work, run `atlas upsert` or `atlas record`
+4. RECORD learnings - After completing work, run `atlas create` for new atoms or `atlas update --id <id>` for existing atoms
 5. LINK related atoms - Connect related knowledge with `atlas link`
 
 Use Atlas proactively: search before planning, record after learning.
@@ -85,7 +85,7 @@ CITATION: Reference atom IDs in reasoning, e.g., [K-000042]
 PIPE-FRIENDLY USAGE:
 - `printf '%s\n' "$REQUEST" | atlas search`
 - `atlas search "error handling" --ids | xargs atlas get`
-- `cat notes.md | atlas upsert --title "Pattern" --type recipe --confidence high --summary "Short summary"`"#;
+- `cat notes.md | atlas create --title "Pattern" --type recipe --confidence high --summary "Short summary"`"#;
 
 const INSTRUCTIONS_IDE: &str = r#"Atlas CLI - Long-term memory for AI agents.
 
@@ -93,7 +93,7 @@ WORKFLOW (optimized for IDE assistants):
 1. SEARCH - Run `atlas search "<query>"` when users ask about patterns or conventions
 2. GET - Run `atlas get <id>` for detailed guidance
 3. APPLY - Use retrieved knowledge to inform code suggestions
-4. RECORD - Capture useful patterns with `atlas upsert`
+4. RECORD - Capture useful patterns with `atlas create`, or revise known patterns with `atlas update --id <id>`
 
 Focus on code patterns, conventions, and project-specific knowledge.
 
@@ -116,7 +116,7 @@ const INSTRUCTIONS_CODEX: &str = r#"Atlas CLI - Long-term memory for AI agents.
 WORKFLOW (optimized for Codex CLI):
 1. SEARCH - Query relevant context before generating code: `atlas search "<query>"`
 2. GET - Retrieve full atoms for detailed patterns: `atlas get <id>`
-3. UPSERT - Record reusable patterns after successful work: `atlas upsert ...`
+3. RECORD - Record reusable patterns after successful work: `atlas create ...`
 4. LINK - Connect related knowledge atoms: `atlas link <source> <target>`
 
 Prioritize recipes and gotchas for code generation tasks.
@@ -130,7 +130,7 @@ CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallb
 PIPE-FRIENDLY USAGE:
 - `printf '%s\n' "$TASK" | atlas search --page-size 10`
 - `atlas search "api client" --ids | xargs atlas get`
-- `cat finding.md | atlas upsert --title "API client timeout gotcha" --type gotcha --confidence high --summary "Timeouts must be explicit" --tag api --tag timeout`"#;
+- `cat finding.md | atlas create --title "API client timeout gotcha" --type gotcha --confidence high --summary "Timeouts must be explicit" --tag api --tag timeout`"#;
 
 #[cfg(test)]
 mod tests {

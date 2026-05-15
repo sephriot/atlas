@@ -2,7 +2,7 @@ mod atoms;
 mod link;
 mod reference;
 mod search;
-mod upsert;
+mod write;
 
 pub use atoms::{
     delete_atom, enable_local_storage, get_atom, get_context, list_atoms, list_projects,
@@ -10,4 +10,4 @@ pub use atoms::{
 };
 pub use link::{link, unlink, LinkRequest};
 pub use search::{search, SearchRequest};
-pub use upsert::{upsert, UpsertRequest};
+pub use write::{create_atom, update_atom, AtomWriteRequest};

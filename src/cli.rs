@@ -1,16 +1,16 @@
 use std::fmt;
 use std::io::{self, IsTerminal, Read};
 
-use clap::{Subcommand, ValueEnum};
+use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::client_context::ClientContext;
 use crate::error::AtlasError;
 use crate::models::{AtomType, Confidence};
 use crate::tools::{
-    delete_atom, enable_local_storage, get_atom, get_context, link, list_atoms, list_projects,
-    search, unlink, upsert, DeleteAtomRequest, EnableLocalStorageRequest, GetAtomRequest,
-    LinkRequest, ListAtomsRequest, SearchRequest, UpsertRequest,
+    create_atom, delete_atom, enable_local_storage, get_atom, get_context, link, list_atoms,
+    list_projects, search, unlink, update_atom, AtomWriteRequest, DeleteAtomRequest,
+    EnableLocalStorageRequest, GetAtomRequest, LinkRequest, ListAtomsRequest, SearchRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -100,48 +100,20 @@ pub enum Commands {
         ids: bool,
     },
 
-    /// Create or update an atom
-    #[command(alias = "record")]
-    Upsert {
-        /// Atom ID for updates (omit for new atoms)
+    /// Create a new atom
+    Create {
+        #[command(flatten)]
+        content: AtomWriteArgs,
+    },
+
+    /// Update an existing atom by ID
+    Update {
+        /// Atom ID to update (org/project/id, project/id, or bare id)
         #[arg(long)]
-        id: Option<String>,
+        id: String,
 
-        /// Short descriptive title
-        #[arg(long)]
-        title: String,
-
-        /// Type of knowledge
-        #[arg(long = "type", short = 't')]
-        atom_type: AtomType,
-
-        /// Confidence level
-        #[arg(long, short = 'c')]
-        confidence: Confidence,
-
-        /// Brief explanation (use '-' for stdin; omitted reads piped stdin)
-        #[arg(long)]
-        summary: Option<String>,
-
-        /// Extended content (use '-' for stdin; piped stdin is used when summary is set)
-        #[arg(long)]
-        details: Option<String>,
-
-        /// Potential pitfalls (can specify multiple)
-        #[arg(long)]
-        pitfall: Vec<String>,
-
-        /// Keywords for search (can specify multiple)
-        #[arg(long, short = 'T')]
-        tag: Vec<String>,
-
-        /// References (can specify multiple)
-        #[arg(long)]
-        source: Vec<String>,
-
-        /// Related atoms (can specify multiple)
-        #[arg(long)]
-        link: Vec<String>,
+        #[command(flatten)]
+        content: AtomWriteArgs,
     },
 
     /// Delete an atom
@@ -191,6 +163,45 @@ pub enum Commands {
         #[arg(long)]
         project: String,
     },
+}
+
+#[derive(Args, Debug)]
+pub struct AtomWriteArgs {
+    /// Short descriptive title
+    #[arg(long)]
+    title: String,
+
+    /// Type of knowledge
+    #[arg(long = "type", short = 't')]
+    atom_type: AtomType,
+
+    /// Confidence level
+    #[arg(long, short = 'c')]
+    confidence: Confidence,
+
+    /// Brief explanation (use '-' for stdin; omitted reads piped stdin)
+    #[arg(long)]
+    summary: Option<String>,
+
+    /// Extended content (use '-' for stdin; piped stdin is used when summary is set)
+    #[arg(long)]
+    details: Option<String>,
+
+    /// Potential pitfalls (can specify multiple)
+    #[arg(long)]
+    pitfall: Vec<String>,
+
+    /// Keywords for search (can specify multiple)
+    #[arg(long, short = 'T')]
+    tag: Vec<String>,
+
+    /// References (can specify multiple)
+    #[arg(long)]
+    source: Vec<String>,
+
+    /// Related atoms (can specify multiple)
+    #[arg(long)]
+    link: Vec<String>,
 }
 
 /// Run a CLI command and print output.
@@ -258,40 +269,14 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
                 print_output(&results, format)?;
             }
         }
-        Commands::Upsert {
-            id,
-            title,
-            atom_type,
-            confidence,
-            summary,
-            details,
-            pitfall,
-            tag,
-            source,
-            link,
-        } => {
-            let (summary, details) = resolve_upsert_text(summary, details)?;
-            let req = UpsertRequest {
-                id,
-                title,
-                atom_type,
-                confidence,
-                summary,
-                details,
-                pitfalls: if pitfall.is_empty() {
-                    None
-                } else {
-                    Some(pitfall)
-                },
-                tags: if tag.is_empty() { None } else { Some(tag) },
-                sources: if source.is_empty() {
-                    None
-                } else {
-                    Some(source)
-                },
-                links: if link.is_empty() { None } else { Some(link) },
-            };
-            let result = upsert(req)?;
+        Commands::Create { content } => {
+            let req = atom_write_request_from_args(content)?;
+            let result = create_atom(req)?;
+            print_output(&result, format)?;
+        }
+        Commands::Update { id, content } => {
+            let req = atom_write_request_from_args(content)?;
+            let result = update_atom(id, req)?;
             print_output(&result, format)?;
         }
         Commands::Delete { id } => {
@@ -327,6 +312,37 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn atom_write_request_from_args(args: AtomWriteArgs) -> Result<AtomWriteRequest, AtlasError> {
+    let (summary, details) = resolve_atom_write_text(args.summary, args.details)?;
+    Ok(AtomWriteRequest {
+        title: args.title,
+        atom_type: args.atom_type,
+        confidence: args.confidence,
+        summary,
+        details,
+        pitfalls: if args.pitfall.is_empty() {
+            None
+        } else {
+            Some(args.pitfall)
+        },
+        tags: if args.tag.is_empty() {
+            None
+        } else {
+            Some(args.tag)
+        },
+        sources: if args.source.is_empty() {
+            None
+        } else {
+            Some(args.source)
+        },
+        links: if args.link.is_empty() {
+            None
+        } else {
+            Some(args.link)
+        },
+    })
 }
 
 /// Resolve input: if arg is Some("-") or None and stdin is piped, read from stdin.
@@ -386,7 +402,7 @@ fn parse_ids(input: &str) -> Result<Vec<String>, AtlasError> {
     Ok(ids)
 }
 
-fn resolve_upsert_text(
+fn resolve_atom_write_text(
     summary: Option<String>,
     details: Option<String>,
 ) -> Result<(String, Option<String>), AtlasError> {
@@ -399,10 +415,10 @@ fn resolve_upsert_text(
         None
     };
 
-    resolve_upsert_text_from_source(summary, details, stdin)
+    resolve_atom_write_text_from_source(summary, details, stdin)
 }
 
-fn resolve_upsert_text_from_source(
+fn resolve_atom_write_text_from_source(
     summary: Option<String>,
     details: Option<String>,
     stdin: Option<String>,
@@ -503,17 +519,17 @@ mod tests {
     }
 
     #[test]
-    fn upsert_text_uses_piped_stdin_as_summary_when_summary_missing() {
+    fn atom_write_text_uses_piped_stdin_as_summary_when_summary_missing() {
         let (summary, details) =
-            resolve_upsert_text_from_source(None, None, Some("remember this".to_string()))
+            resolve_atom_write_text_from_source(None, None, Some("remember this".to_string()))
                 .expect("stdin should become summary");
         assert_eq!(summary, "remember this");
         assert_eq!(details, None);
     }
 
     #[test]
-    fn upsert_text_uses_piped_stdin_as_details_when_summary_set() {
-        let (summary, details) = resolve_upsert_text_from_source(
+    fn atom_write_text_uses_piped_stdin_as_details_when_summary_set() {
+        let (summary, details) = resolve_atom_write_text_from_source(
             Some("short".to_string()),
             None,
             Some("longer markdown".to_string()),
@@ -524,8 +540,8 @@ mod tests {
     }
 
     #[test]
-    fn upsert_text_rejects_two_stdin_consumers() {
-        let err = resolve_upsert_text_from_source(
+    fn atom_write_text_rejects_two_stdin_consumers() {
+        let err = resolve_atom_write_text_from_source(
             Some("-".to_string()),
             Some("-".to_string()),
             Some("text".to_string()),

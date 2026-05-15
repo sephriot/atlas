@@ -22,7 +22,7 @@ fn detect_stringified_array(value: &str) -> Option<Vec<String>> {
 
 /// Validate that array fields don't contain stringified JSON arrays.
 /// Returns an error with the correct format if stringified arrays are detected.
-fn validate_array_fields(req: &UpsertRequest) -> Result<(), AtlasError> {
+fn validate_array_fields(req: &AtomWriteRequest) -> Result<(), AtlasError> {
     let mut errors = Vec::new();
 
     // Check each array field for stringified arrays
@@ -84,14 +84,9 @@ fn validate_array_fields(req: &UpsertRequest) -> Result<(), AtlasError> {
     }
 }
 
-/// Upsert request parameters.
+/// Atom write request parameters.
 #[derive(Debug, Clone, Deserialize)]
-pub struct UpsertRequest {
-    /// Atom ID for updates: "org/project/K-000001", "project/K-000001", or "K-000001".
-    /// Omit for new atoms (auto-generated).
-    #[serde(default)]
-    pub id: Option<String>,
-
+pub struct AtomWriteRequest {
     /// Short descriptive title
     pub title: String,
 
@@ -126,16 +121,28 @@ pub struct UpsertRequest {
     pub links: Option<Vec<String>>,
 }
 
-/// Upsert response.
+/// Atom write response.
 #[derive(Debug, Clone, Serialize)]
-pub struct UpsertResult {
+pub struct AtomWriteResult {
     /// Full atom reference: "org/project/K-000001"
     pub id: String,
     pub created: bool,
 }
 
-/// Create or update an atom.
-pub fn upsert(req: UpsertRequest) -> Result<UpsertResult, AtlasError> {
+/// Create a new atom.
+pub fn create_atom(req: AtomWriteRequest) -> Result<AtomWriteResult, AtlasError> {
+    write_atom_request(None, req)
+}
+
+/// Update an existing atom by ID.
+pub fn update_atom(id: String, req: AtomWriteRequest) -> Result<AtomWriteResult, AtlasError> {
+    write_atom_request(Some(id), req)
+}
+
+fn write_atom_request(
+    id: Option<String>,
+    req: AtomWriteRequest,
+) -> Result<AtomWriteResult, AtlasError> {
     // Validate array fields aren't stringified JSON
     validate_array_fields(&req)?;
 
@@ -143,7 +150,7 @@ pub fn upsert(req: UpsertRequest) -> Result<UpsertResult, AtlasError> {
     let ctx = detected.context;
 
     // Determine org/project based on whether this is an update or create
-    let (target_org, target_project) = if let Some(ref id) = req.id {
+    let (target_org, target_project) = if let Some(ref id) = id {
         // Update: parse full path from id
         let atom_ref = parse_atom_reference(id, &ctx);
         (atom_ref.org, atom_ref.project)
@@ -164,7 +171,7 @@ pub fn upsert(req: UpsertRequest) -> Result<UpsertResult, AtlasError> {
 
     let mut index = load_index(&target_org, &target_project)?;
 
-    let (atom, created) = if let Some(ref id_str) = req.id {
+    let (atom, created) = if let Some(ref id_str) = id {
         // Update existing - re-parse to get just the ID part
         let atom_ref = parse_atom_reference(id_str, &ctx);
         let mut atom = read_atom(&target_org, &target_project, &atom_ref.id)?;
@@ -195,10 +202,10 @@ pub fn upsert(req: UpsertRequest) -> Result<UpsertResult, AtlasError> {
     write_atom(&target_org, &target_project, &atom)?;
 
     // Update index
-    index.upsert_entry(IndexEntry::from_atom(&atom));
+    index.insert_or_replace_entry(IndexEntry::from_atom(&atom));
     save_index(&target_org, &target_project, &index)?;
 
-    Ok(UpsertResult {
+    Ok(AtomWriteResult {
         id: format_atom_reference(&target_org, &target_project, &atom.id),
         created,
     })
@@ -247,9 +254,8 @@ mod tests {
         sources: Option<Vec<String>>,
         links: Option<Vec<String>>,
         pitfalls: Option<Vec<String>>,
-    ) -> UpsertRequest {
-        UpsertRequest {
-            id: None,
+    ) -> AtomWriteRequest {
+        AtomWriteRequest {
             title: "Test".into(),
             atom_type: AtomType::Note,
             confidence: Confidence::Medium,
@@ -263,9 +269,9 @@ mod tests {
     }
 
     #[test]
-    fn test_upsert_request_deserializes_minimal_json() {
+    fn test_atom_write_request_deserializes_minimal_json() {
         let json = r#"{"title":"T","type":"recipe","confidence":"high","summary":"S"}"#;
-        let req: UpsertRequest = serde_json::from_str(json).expect("valid JSON");
+        let req: AtomWriteRequest = serde_json::from_str(json).expect("valid JSON");
         assert_eq!(req.title, "T");
         assert_eq!(req.atom_type, AtomType::Recipe);
         assert_eq!(req.confidence, Confidence::High);
@@ -273,9 +279,9 @@ mod tests {
     }
 
     #[test]
-    fn test_upsert_request_invalid_json_unquoted_type_is_error() {
+    fn test_atom_write_request_invalid_json_unquoted_type_is_error() {
         let json = r#"{"title":"T","type":recipe,"confidence":"high","summary":"S"}"#;
-        assert!(serde_json::from_str::<UpsertRequest>(json).is_err());
+        assert!(serde_json::from_str::<AtomWriteRequest>(json).is_err());
     }
 
     #[test]
