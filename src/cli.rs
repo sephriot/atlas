@@ -1,0 +1,537 @@
+use std::fmt;
+use std::io::{self, IsTerminal, Read};
+
+use clap::{Subcommand, ValueEnum};
+use serde::Serialize;
+
+use crate::client_context::ClientContext;
+use crate::error::AtlasError;
+use crate::models::{AtomType, Confidence};
+use crate::tools::{
+    delete_atom, enable_local_storage, get_atom, get_context, link, list_atoms, list_projects,
+    search, unlink, upsert, DeleteAtomRequest, EnableLocalStorageRequest, GetAtomRequest,
+    LinkRequest, ListAtomsRequest, SearchRequest, UpsertRequest,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum OutputFormat {
+    Yaml,
+    Json,
+}
+
+impl fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OutputFormat::Yaml => write!(f, "yaml"),
+            OutputFormat::Json => write!(f, "json"),
+        }
+    }
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Search atoms by query
+    #[command(alias = "find")]
+    Search {
+        /// Search query (use '-' for stdin, or pipe text with no query)
+        query: Option<String>,
+
+        /// Filter by atom types
+        #[arg(long = "type", short = 't')]
+        types: Vec<AtomType>,
+
+        /// Filter by tags
+        #[arg(long, short = 'T')]
+        tag: Vec<String>,
+
+        /// Filter by confidence level
+        #[arg(long, short = 'c')]
+        confidence: Option<Confidence>,
+
+        /// Page number (1-indexed)
+        #[arg(long, short = 'p', default_value = "1")]
+        page: usize,
+
+        /// Results per page
+        #[arg(long, short = 'n', default_value = "20")]
+        page_size: usize,
+
+        /// Scope filter: org name or org/project path
+        #[arg(long)]
+        scope: Option<String>,
+
+        /// Print only full atom IDs, one per line
+        #[arg(long)]
+        ids: bool,
+    },
+
+    /// Get one or more atoms by ID
+    #[command(alias = "read")]
+    Get {
+        /// Atom IDs (org/project/id, project/id, bare id, '-' for stdin)
+        ids: Vec<String>,
+    },
+
+    /// List atoms with optional filters
+    #[command(alias = "list")]
+    Atoms {
+        /// Filter by atom types
+        #[arg(long = "type", short = 't')]
+        types: Vec<AtomType>,
+
+        /// Filter by tags
+        #[arg(long, short = 'T')]
+        tag: Vec<String>,
+
+        /// Filter by confidence level
+        #[arg(long, short = 'c')]
+        confidence: Option<Confidence>,
+
+        /// Maximum number of results
+        #[arg(long, short = 'l', default_value = "1000")]
+        limit: usize,
+
+        /// Scope filter: org name or org/project path
+        #[arg(long)]
+        scope: Option<String>,
+
+        /// Print only full atom IDs, one per line
+        #[arg(long)]
+        ids: bool,
+    },
+
+    /// Create or update an atom
+    #[command(alias = "record")]
+    Upsert {
+        /// Atom ID for updates (omit for new atoms)
+        #[arg(long)]
+        id: Option<String>,
+
+        /// Short descriptive title
+        #[arg(long)]
+        title: String,
+
+        /// Type of knowledge
+        #[arg(long = "type", short = 't')]
+        atom_type: AtomType,
+
+        /// Confidence level
+        #[arg(long, short = 'c')]
+        confidence: Confidence,
+
+        /// Brief explanation (use '-' for stdin; omitted reads piped stdin)
+        #[arg(long)]
+        summary: Option<String>,
+
+        /// Extended content (use '-' for stdin; piped stdin is used when summary is set)
+        #[arg(long)]
+        details: Option<String>,
+
+        /// Potential pitfalls (can specify multiple)
+        #[arg(long)]
+        pitfall: Vec<String>,
+
+        /// Keywords for search (can specify multiple)
+        #[arg(long, short = 'T')]
+        tag: Vec<String>,
+
+        /// References (can specify multiple)
+        #[arg(long)]
+        source: Vec<String>,
+
+        /// Related atoms (can specify multiple)
+        #[arg(long)]
+        link: Vec<String>,
+    },
+
+    /// Delete an atom
+    Delete {
+        /// Atom ID (org/project/id, project/id, or bare id)
+        id: String,
+    },
+
+    /// Create a directed link between atoms
+    Link {
+        /// Source atom ID
+        source: String,
+
+        /// Target atom ID
+        target: String,
+    },
+
+    /// Remove a directed link between atoms
+    Unlink {
+        /// Source atom ID
+        source: String,
+
+        /// Target atom ID
+        target: String,
+    },
+
+    /// List all projects
+    Projects,
+
+    /// Show detected project context
+    Context,
+
+    /// Print agent instructions for using the Atlas CLI
+    Instructions {
+        /// Target agent/client style
+        #[arg(long, default_value_t = ClientContext::default())]
+        client: ClientContext,
+    },
+
+    /// Enable local storage for a project
+    EnableLocal {
+        /// Organization name
+        #[arg(long)]
+        org: String,
+
+        /// Project name
+        #[arg(long)]
+        project: String,
+    },
+}
+
+/// Run a CLI command and print output.
+pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
+    match cmd {
+        Commands::Search {
+            query,
+            types,
+            tag,
+            confidence,
+            page,
+            page_size,
+            scope,
+            ids,
+        } => {
+            let query = resolve_input(query)?;
+            let req = SearchRequest {
+                query: if query.is_empty() { None } else { Some(query) },
+                types: if types.is_empty() { None } else { Some(types) },
+                tags: if tag.is_empty() { None } else { Some(tag) },
+                confidence,
+                page: Some(page),
+                page_size: Some(page_size),
+                scope,
+            };
+            let results = search(req)?;
+            if ids {
+                print_lines(results.results.iter().map(|result| result.id.as_str()));
+            } else {
+                print_output(&results, format)?;
+            }
+        }
+        Commands::Get { ids } => {
+            let ids = resolve_ids(ids)?;
+            if ids.len() == 1 {
+                let atom = get_atom(GetAtomRequest { id: ids[0].clone() })?;
+                print_output(&atom, format)?;
+            } else {
+                let atoms = ids
+                    .into_iter()
+                    .map(|id| get_atom(GetAtomRequest { id }))
+                    .collect::<Result<Vec<_>, _>>()?;
+                print_output(&atoms, format)?;
+            }
+        }
+        Commands::Atoms {
+            types,
+            tag,
+            confidence,
+            limit,
+            scope,
+            ids,
+        } => {
+            let req = ListAtomsRequest {
+                types: if types.is_empty() { None } else { Some(types) },
+                tags: if tag.is_empty() { None } else { Some(tag) },
+                confidence,
+                limit: Some(limit),
+                scope,
+            };
+            let results = list_atoms(req)?;
+            if ids {
+                print_lines(results.iter().map(|result| result.id.as_str()));
+            } else {
+                print_output(&results, format)?;
+            }
+        }
+        Commands::Upsert {
+            id,
+            title,
+            atom_type,
+            confidence,
+            summary,
+            details,
+            pitfall,
+            tag,
+            source,
+            link,
+        } => {
+            let (summary, details) = resolve_upsert_text(summary, details)?;
+            let req = UpsertRequest {
+                id,
+                title,
+                atom_type,
+                confidence,
+                summary,
+                details,
+                pitfalls: if pitfall.is_empty() {
+                    None
+                } else {
+                    Some(pitfall)
+                },
+                tags: if tag.is_empty() { None } else { Some(tag) },
+                sources: if source.is_empty() {
+                    None
+                } else {
+                    Some(source)
+                },
+                links: if link.is_empty() { None } else { Some(link) },
+            };
+            let result = upsert(req)?;
+            print_output(&result, format)?;
+        }
+        Commands::Delete { id } => {
+            let result = delete_atom(DeleteAtomRequest { id })?;
+            print_output(&result, format)?;
+        }
+        Commands::Link { source, target } => {
+            let result = link(LinkRequest { source, target })?;
+            print_output(&result, format)?;
+        }
+        Commands::Unlink { source, target } => {
+            let result = unlink(LinkRequest { source, target })?;
+            print_output(&result, format)?;
+        }
+        Commands::Projects => {
+            let results = list_projects()?;
+            print_output(&results, format)?;
+        }
+        Commands::Context => {
+            let info = get_context()?;
+            print_output(&info, format)?;
+        }
+        Commands::Instructions { client } => {
+            let instructions = client.instructions();
+            print!("{}", instructions);
+            if !instructions.ends_with('\n') {
+                println!();
+            }
+        }
+        Commands::EnableLocal { org, project } => {
+            let result = enable_local_storage(EnableLocalStorageRequest { org, project })?;
+            print_output(&result, format)?;
+        }
+    }
+    Ok(())
+}
+
+/// Resolve input: if arg is Some("-") or None and stdin is piped, read from stdin.
+fn resolve_input(arg: Option<String>) -> Result<String, AtlasError> {
+    match arg {
+        Some(s) if s == "-" => read_stdin(),
+        Some(s) => Ok(s),
+        None => {
+            if !io::stdin().is_terminal() {
+                read_stdin()
+            } else {
+                Ok(String::new())
+            }
+        }
+    }
+}
+
+fn resolve_ids(args: Vec<String>) -> Result<Vec<String>, AtlasError> {
+    if args.is_empty() {
+        if !io::stdin().is_terminal() {
+            let input = read_stdin()?;
+            return parse_ids(&input);
+        }
+        return Err(AtlasError::Validation(
+            "At least one atom ID is required. Pass IDs as arguments, use '-', or pipe IDs on stdin."
+                .to_string(),
+        ));
+    }
+
+    if args.iter().any(|arg| arg == "-") {
+        if args.len() != 1 {
+            return Err(AtlasError::Validation(
+                "'-' must be the only get argument when reading IDs from stdin".to_string(),
+            ));
+        }
+        let input = read_stdin()?;
+        return parse_ids(&input);
+    }
+
+    Ok(args)
+}
+
+fn parse_ids(input: &str) -> Result<Vec<String>, AtlasError> {
+    let ids: Vec<String> = input
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+
+    if ids.is_empty() {
+        return Err(AtlasError::Validation(
+            "No atom IDs found in stdin".to_string(),
+        ));
+    }
+
+    Ok(ids)
+}
+
+fn resolve_upsert_text(
+    summary: Option<String>,
+    details: Option<String>,
+) -> Result<(String, Option<String>), AtlasError> {
+    let stdin = if !io::stdin().is_terminal()
+        || summary.as_deref() == Some("-")
+        || details.as_deref() == Some("-")
+    {
+        Some(read_stdin()?)
+    } else {
+        None
+    };
+
+    resolve_upsert_text_from_source(summary, details, stdin)
+}
+
+fn resolve_upsert_text_from_source(
+    summary: Option<String>,
+    details: Option<String>,
+    stdin: Option<String>,
+) -> Result<(String, Option<String>), AtlasError> {
+    let summary_from_stdin = summary.as_deref() == Some("-");
+    let details_from_stdin = details.as_deref() == Some("-");
+
+    if summary_from_stdin && details_from_stdin {
+        return Err(AtlasError::Validation(
+            "Only one of --summary or --details can read from stdin".to_string(),
+        ));
+    }
+
+    let summary_was_provided = summary.is_some();
+    let summary = match summary {
+        Some(value) if value == "-" => stdin.clone().ok_or_else(stdin_required_error)?,
+        Some(value) => value,
+        None => stdin.clone().ok_or_else(summary_required_error)?,
+    };
+
+    if summary.trim().is_empty() {
+        return Err(summary_required_error());
+    }
+
+    let details = match details {
+        Some(value) if value == "-" => Some(stdin.ok_or_else(stdin_required_error)?),
+        Some(value) => Some(value),
+        None if summary_was_provided && !summary_from_stdin => stdin,
+        None => None,
+    }
+    .filter(|value| !value.trim().is_empty());
+
+    Ok((summary, details))
+}
+
+fn summary_required_error() -> AtlasError {
+    AtlasError::Validation(
+        "--summary is required unless summary text is piped on stdin".to_string(),
+    )
+}
+
+fn stdin_required_error() -> AtlasError {
+    AtlasError::Validation("Expected stdin for '-' but no piped input was available".to_string())
+}
+
+/// Read all input from stdin.
+fn read_stdin() -> Result<String, AtlasError> {
+    let mut buffer = String::new();
+    io::stdin()
+        .read_to_string(&mut buffer)
+        .map_err(AtlasError::Io)?;
+    Ok(buffer.trim().to_string())
+}
+
+fn print_lines<'a>(lines: impl Iterator<Item = &'a str>) {
+    for line in lines {
+        println!("{}", line);
+    }
+}
+
+/// Print output as YAML (default) or JSON.
+fn print_output<T: Serialize>(value: &T, format: OutputFormat) -> Result<(), AtlasError> {
+    match format {
+        OutputFormat::Json => {
+            let output = serde_json::to_string_pretty(value)
+                .map_err(|e| AtlasError::Config(format!("JSON serialization error: {}", e)))?;
+            println!("{}", output);
+        }
+        OutputFormat::Yaml => {
+            let output = serde_yaml::to_string(value)?;
+            print!("{}", output);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_format_display_matches_cli_values() {
+        assert_eq!(OutputFormat::Yaml.to_string(), "yaml");
+        assert_eq!(OutputFormat::Json.to_string(), "json");
+    }
+
+    #[test]
+    fn parse_ids_splits_whitespace() {
+        let ids = parse_ids("K-000001\nproj/K-000002 org/proj/K-000003").expect("ids should parse");
+        assert_eq!(
+            ids,
+            vec![
+                "K-000001".to_string(),
+                "proj/K-000002".to_string(),
+                "org/proj/K-000003".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn upsert_text_uses_piped_stdin_as_summary_when_summary_missing() {
+        let (summary, details) =
+            resolve_upsert_text_from_source(None, None, Some("remember this".to_string()))
+                .expect("stdin should become summary");
+        assert_eq!(summary, "remember this");
+        assert_eq!(details, None);
+    }
+
+    #[test]
+    fn upsert_text_uses_piped_stdin_as_details_when_summary_set() {
+        let (summary, details) = resolve_upsert_text_from_source(
+            Some("short".to_string()),
+            None,
+            Some("longer markdown".to_string()),
+        )
+        .expect("stdin should become details");
+        assert_eq!(summary, "short");
+        assert_eq!(details, Some("longer markdown".to_string()));
+    }
+
+    #[test]
+    fn upsert_text_rejects_two_stdin_consumers() {
+        let err = resolve_upsert_text_from_source(
+            Some("-".to_string()),
+            Some("-".to_string()),
+            Some("text".to_string()),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("Only one of --summary or --details"));
+    }
+}
