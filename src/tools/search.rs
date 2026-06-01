@@ -6,10 +6,16 @@ use crate::error::AtlasError;
 use crate::locking::ProjectLock;
 use crate::models::{AtomType, Confidence, IndexEntry};
 use crate::storage::load_index;
+use log;
 
 use super::reference::{format_atom_reference, parse_scope};
 
 /// Score multiplier for results from other projects in the same org.
+///
+/// Results from projects other than the current project are penalized by this factor
+/// to prioritize results from the project most relevant to the user's current context.
+/// A value of 0.7 means cross-project results score at 70% of their base score,
+/// ensuring current-project results generally rank higher when scores are otherwise equal.
 const CROSS_PROJECT_SCORE_MULTIPLIER: f32 = 0.7;
 
 /// Search request parameters.
@@ -134,7 +140,12 @@ pub fn search(req: SearchRequest) -> Result<SearchResponse, AtlasError> {
         let _lock = ProjectLock::acquire(&search_org, &project_name)?;
         let index = match load_index(&search_org, &project_name) {
             Ok(idx) => idx,
-            Err(_) => continue, // Skip projects with no index
+            Err(e) => {
+                // Log index loading failures at debug level to help with troubleshooting
+                #[cfg(debug_assertions)]
+                log::debug!("Failed to load index for {}/{} (skipping): {}", search_org, project_name, e);
+                continue; // Skip projects with index loading issues
+            }
         };
 
         for entry in &index.entries {
@@ -188,13 +199,17 @@ pub fn search(req: SearchRequest) -> Result<SearchResponse, AtlasError> {
     results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     // Capture total BEFORE pagination
+    // We need the total count before applying pagination for accurate metadata
     let total = results.len();
+    // Calculate total pages using ceiling division to ensure we count partial pages
     let total_pages = total.div_ceil(page_size);
 
-    // Calculate offset from page
+    // Calculate offset from page (1-indexed)
+    // Page 1 -> offset 0, Page 2 -> offset page_size, etc.
     let offset = (page - 1) * page_size;
 
-    // Apply pagination
+    // Apply pagination by skipping to the offset and taking page_size results
+    // We extract just the SearchResult, discarding the raw score used for sorting
     let results: Vec<SearchResult> = results
         .into_iter()
         .skip(offset)
@@ -211,6 +226,25 @@ pub fn search(req: SearchRequest) -> Result<SearchResponse, AtlasError> {
     })
 }
 
+/// Calculate relevance score for an index entry based on query terms.
+///
+/// Scoring algorithm breakdown:
+/// - Title exact match: 10.0 points (highest priority for precise title matches)
+/// - Title contains term: 5.0 points (good for partial title matches)
+/// - Tag exact match: 3.0 points (tags are important categorization)
+/// - Tag contains term: 1.0 point (fuzzy tag matching)
+/// - Source contains term: 2.0 points (useful for finding atoms by file references)
+///
+/// The algorithm is case-insensitive and processes each query term independently,
+/// summing scores across all terms. Empty query returns 1.0 to match all entries
+/// when no specific search terms are provided.
+///
+/// # Arguments
+/// * `entry` - The index entry to score
+/// * `query_terms` - Vector of lowercase query terms to match against
+///
+/// # Returns
+/// * f32 - The calculated relevance score (higher is more relevant)
 fn calculate_score(entry: &IndexEntry, query_terms: &[String]) -> f32 {
     if query_terms.is_empty() {
         return 1.0; // No query means match all
@@ -223,28 +257,28 @@ fn calculate_score(entry: &IndexEntry, query_terms: &[String]) -> f32 {
     let mut score = 0.0;
 
     for term in query_terms {
-        // Title exact match
+        // Title exact match - highest weight as it indicates precise intent
         if title_lower == *term {
             score += 10.0;
         }
-        // Title contains
+        // Title contains - good for partial matches
         else if title_lower.contains(term) {
             score += 5.0;
         }
 
-        // Tag exact match
+        // Tag exact match - tags are important for categorization
         if tags_lower.contains(term) {
             score += 3.0;
         }
 
-        // Tag contains
+        // Tag contains - fuzzy matching for tags
         for tag in &tags_lower {
             if tag.contains(term) && tag != term {
                 score += 1.0;
             }
         }
 
-        // Source contains (file path or URL matching)
+        // Source contains - useful for finding atoms by file references
         for source in &sources_lower {
             if source.contains(term) {
                 score += 2.0;

@@ -85,6 +85,7 @@ dependencies = [
  "clap",
  "dirs",
  "fs2",
+ "log",
  "regex",
  "serde",
  "serde_json",

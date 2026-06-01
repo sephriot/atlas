@@ -76,11 +76,35 @@ pub fn validate_name(name: &str) -> Result<(), AtlasError> {
 
 /// Full context detection with source tracking.
 ///
-/// Detection priority:
-/// 1. ATLAS_ORG + ATLAS_PROJECT env vars (also set by --org/--project)
-/// 2. Local storage (.atlas/ in CWD)
-/// 3. Git remote URL parsing
-/// 4. Fallback: global/{dirname}
+/// Detection follows a specific priority order to ensure the most explicit
+/// and reliable context sources are used first:
+///
+/// 1. **Environment Variables / CLI Flags** (Highest Priority)
+///    - Explicitly set via ATLAS_ORG/ATLAS_PROJECT env vars
+///    - Also set by --org/--project CLI arguments
+///    - Most reliable as they are explicitly configured by user
+///
+/// 2. **Local Storage** (.atlas/ in Current Working Directory)
+///    - Looks for .atlas/config.yaml in current directory
+///    - Useful for repository-local configuration
+///    - Allows different contexts for different checkouts/workspaces
+///
+/// 3. **Git Remote URL Parsing**
+///    - Extracts org/project from git remote get-url origin
+///    - Supports common formats:
+///      - git@github.com:org/project.git
+///      - https://github.com/org/project.git
+///      - git@gitlab.com:org/project.git
+///      - https://gitlab.com/org/project.git
+///    - Good default when no explicit configuration is provided
+///
+/// 4. **Fallback** (Lowest Priority)
+///    - Uses global/{directory_name} as last resort
+///    - Ensures we always return a valid context
+///    - Less reliable but prevents complete failure
+///
+/// # Returns
+/// * Result<DetectedContext, AtlasError> - The detected context with source tracking
 pub fn detect_context_full() -> Result<DetectedContext, AtlasError> {
     // 1. Env vars / CLI flags
     if let (Ok(org), Ok(project)) = (std::env::var("ATLAS_ORG"), std::env::var("ATLAS_PROJECT")) {
@@ -116,7 +140,20 @@ pub fn detect_context_full() -> Result<DetectedContext, AtlasError> {
 
 /// Try to detect context from .atlas/ directory in CWD.
 ///
-/// Looks for .atlas/config.yaml with org/project fields.
+/// This function checks for the presence of a .atlas/ directory in the provided
+/// path and attempts to read org/project configuration from .atlas/config.yaml.
+///
+/// The config.yaml file is expected to contain simple key-value pairs for:
+/// - org: organization name
+/// - project: project name
+///
+/// Both values are required for the context to be considered valid.
+///
+/// # Arguments
+/// * `path` - The directory path to check for .atlas/ configuration
+///
+/// # Returns
+/// * Option<ProjectContext> - Some context if found and valid, None otherwise
 fn try_local_storage(path: &Path) -> Option<ProjectContext> {
     let atlas_dir = path.join(".atlas");
     if !atlas_dir.is_dir() {
@@ -197,6 +234,23 @@ pub fn detect_context_from_path(path: &Path) -> Result<ProjectContext, AtlasErro
 }
 
 /// Try to get org/project from git remote URL.
+///
+/// This function attempts to extract the organization and project names from
+/// the git remote URL of the repository located at the provided path.
+///
+/// It executes 'git remote get-url origin' in the specified directory and
+/// parses the resulting URL to extract the org/project components.
+///
+/// Supported URL formats:
+/// - SSH: git@hostname:org/project.git
+/// - HTTPS: https://hostname/org/project.git
+/// - Both with and without the .git suffix
+///
+/// # Arguments
+/// * `path` - The directory path where the git repository is located
+///
+/// # Returns
+/// * Option<ProjectContext> - Some context if git remote is found and parsable, None otherwise
 fn try_git_remote(path: &Path) -> Option<ProjectContext> {
     let output = Command::new("git")
         .args(["remote", "get-url", "origin"])
