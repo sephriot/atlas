@@ -6,7 +6,6 @@ use crate::error::AtlasError;
 use crate::locking::ProjectLock;
 use crate::models::{AtomType, Confidence, IndexEntry};
 use crate::storage::load_index;
-use log;
 
 use super::reference::{format_atom_reference, parse_scope};
 
@@ -142,8 +141,14 @@ pub fn search(req: SearchRequest) -> Result<SearchResponse, AtlasError> {
             Ok(idx) => idx,
             Err(e) => {
                 // Log index loading failures at debug level to help with troubleshooting
-                #[cfg(debug_assertions)]
-                log::debug!("Failed to load index for {}/{} (skipping): {}", search_org, project_name, e);
+                if cfg!(debug_assertions) {
+                    log::debug!(
+                        "Failed to load index for {}/{} (skipping): {}",
+                        search_org,
+                        project_name,
+                        e
+                    );
+                }
                 continue; // Skip projects with index loading issues
             }
         };

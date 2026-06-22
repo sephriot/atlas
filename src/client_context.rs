@@ -85,7 +85,7 @@ CITATION: Reference atom IDs in reasoning, e.g., [K-000042]
 PIPE-FRIENDLY USAGE:
 - `printf '%s\n' "$REQUEST" | atlas search`
 - `atlas search "error handling" --ids | xargs atlas get`
-- `cat notes.md | atlas create --title "Pattern" --type recipe --confidence high --summary "Short summary"`"#;
+- `cat notes.md | atlas create --title "Pattern" --type recipe --confidence high --summary "Short summary" --details -`"#;
 
 const INSTRUCTIONS_IDE: &str = r#"Atlas CLI - Long-term memory for AI agents.
 
@@ -130,7 +130,7 @@ CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallb
 PIPE-FRIENDLY USAGE:
 - `printf '%s\n' "$TASK" | atlas search --page-size 10`
 - `atlas search "api client" --ids | xargs atlas get`
-- `cat finding.md | atlas create --title "API client timeout gotcha" --type gotcha --confidence high --summary "Timeouts must be explicit" --tag api --tag timeout`"#;
+- `cat finding.md | atlas create --title "API client timeout gotcha" --type gotcha --confidence high --summary "Timeouts must be explicit" --details - --tag api --tag timeout`"#;
 
 #[cfg(test)]
 mod tests {

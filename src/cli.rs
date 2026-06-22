@@ -183,7 +183,7 @@ pub struct AtomWriteArgs {
     #[arg(long)]
     summary: Option<String>,
 
-    /// Extended content (use '-' for stdin; piped stdin is used when summary is set)
+    /// Extended content (use '-' for stdin)
     #[arg(long)]
     details: Option<String>,
 
@@ -406,9 +406,13 @@ fn resolve_atom_write_text(
     summary: Option<String>,
     details: Option<String>,
 ) -> Result<(String, Option<String>), AtlasError> {
-    let stdin = if !io::stdin().is_terminal()
-        || summary.as_deref() == Some("-")
-        || details.as_deref() == Some("-")
+    let summary_from_stdin = summary.as_deref() == Some("-");
+    let details_from_stdin = details.as_deref() == Some("-");
+    let summary_missing = summary.is_none();
+
+    let stdin = if summary_from_stdin
+        || details_from_stdin
+        || (summary_missing && !io::stdin().is_terminal())
     {
         Some(read_stdin()?)
     } else {
@@ -432,7 +436,6 @@ fn resolve_atom_write_text_from_source(
         ));
     }
 
-    let summary_was_provided = summary.is_some();
     let summary = match summary {
         Some(value) if value == "-" => stdin.clone().ok_or_else(stdin_required_error)?,
         Some(value) => value,
@@ -446,7 +449,6 @@ fn resolve_atom_write_text_from_source(
     let details = match details {
         Some(value) if value == "-" => Some(stdin.ok_or_else(stdin_required_error)?),
         Some(value) => Some(value),
-        None if summary_was_provided && !summary_from_stdin => stdin,
         None => None,
     }
     .filter(|value| !value.trim().is_empty());
@@ -528,13 +530,25 @@ mod tests {
     }
 
     #[test]
-    fn atom_write_text_uses_piped_stdin_as_details_when_summary_set() {
+    fn atom_write_text_ignores_implicit_stdin_when_summary_set() {
         let (summary, details) = resolve_atom_write_text_from_source(
             Some("short".to_string()),
             None,
             Some("longer markdown".to_string()),
         )
-        .expect("stdin should become details");
+        .expect("provided summary should be enough");
+        assert_eq!(summary, "short");
+        assert_eq!(details, None);
+    }
+
+    #[test]
+    fn atom_write_text_uses_explicit_stdin_as_details_when_requested() {
+        let (summary, details) = resolve_atom_write_text_from_source(
+            Some("short".to_string()),
+            Some("-".to_string()),
+            Some("longer markdown".to_string()),
+        )
+        .expect("explicit details stdin should be used");
         assert_eq!(summary, "short");
         assert_eq!(details, Some("longer markdown".to_string()));
     }

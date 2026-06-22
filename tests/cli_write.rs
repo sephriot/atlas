@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -94,6 +94,61 @@ fn create_with_same_title_creates_distinct_atoms() {
     assert_eq!(first["created"], true);
     assert_eq!(second["created"], true);
     assert_ne!(first["id"], second["id"]);
+}
+
+#[test]
+fn create_with_summary_does_not_wait_for_open_stdin() {
+    let temp = TempDir::new("create-open-stdin");
+
+    let mut create = atlas(temp.path());
+    create
+        .args([
+            "create",
+            "--title",
+            "Open stdin",
+            "--type",
+            "note",
+            "--confidence",
+            "high",
+            "--summary",
+            "Summary is provided",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = create.spawn().expect("command should spawn");
+    let stdin = child.stdin.take().expect("stdin should be piped");
+    let deadline = Instant::now() + Duration::from_secs(1);
+
+    loop {
+        if child
+            .try_wait()
+            .expect("child status should be readable")
+            .is_some()
+        {
+            drop(stdin);
+            let output = child.wait_with_output().expect("output should be readable");
+            assert_success(&output);
+            let created: Value =
+                serde_json::from_slice(&output.stdout).expect("stdout should be JSON");
+            assert_eq!(created["created"], true);
+            return;
+        }
+
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            drop(stdin);
+            let output = child.wait_with_output().expect("output should be readable");
+            panic!(
+                "atlas create did not exit while stdin stayed open\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]

@@ -38,7 +38,7 @@ Recording to the wrong project makes knowledge unfindable.
    - `--title`: Clear, searchable name
    - `--type`: gotcha, recipe, decision, or note
    - `--summary`: Short one-line summary; omit it to read summary from stdin
-   - stdin with `--summary` set becomes `details`, preserving markdown and avoiding shell quoting problems
+   - use `--details -` to read details from stdin, preserving markdown and avoiding shell quoting problems
    - `--confidence`: high, medium, or low
    - `--tag`: Keywords for searchability (repeatable)
    - `--source`: Relevant file paths (repeatable)
@@ -51,7 +51,7 @@ Use shell pipelines as the default path when recording anything longer than a se
 Atlas stdin behavior:
 - `atlas search` with no query reads the query from stdin
 - `atlas create` with no `--summary` reads stdin as the summary
-- `atlas create --summary "..."` reads piped stdin as `details`
+- `atlas create --summary "..." --details -` reads piped stdin as `details`
 - `atlas create --summary -` reads stdin as the summary explicitly
 - Only one of `--summary -` or `--details -` should consume stdin
 - Updates require `atlas update --id <atom-id> ...`; titles are not used for identity.
@@ -97,6 +97,7 @@ cat notes.md | atlas create \
   --type gotcha \
   --confidence high \
   --summary "The external API enforces strict rate limits..." \
+  --details - \
   --tag api --tag rate-limiting
 ```
 
@@ -107,6 +108,7 @@ git show --stat --oneline HEAD | atlas create \
   --type note \
   --confidence medium \
   --summary "Migration changed the storage and CLI boundaries." \
+  --details - \
   --tag migration
 ```
 

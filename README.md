@@ -67,12 +67,13 @@ printf '%s\n' K-000001 K-000002 | atlas get -
 printf '%s\n' "Remember to regenerate snapshots after parser changes." \
   | atlas create --title "Parser snapshots" --type gotcha --confidence medium --tag parser
 
-# Use stdin as details when --summary is set
+# Use stdin as details explicitly
 cat notes.md | atlas create \
   --title "GraphQL resolver convention" \
   --type recipe \
   --confidence high \
   --summary "Resolvers validate input before storage calls." \
+  --details - \
   --tag graphql --tag resolver
 ```
 

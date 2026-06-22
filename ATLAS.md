@@ -107,12 +107,13 @@ atlas search "auth middleware" --ids | xargs atlas get
 # Fetch IDs from stdin
 printf '%s\n' K-000001 K-000002 | atlas get -
 
-# Record stdin as details
+# Record stdin as details explicitly
 cat notes.md | atlas create \
   --title "Resolver convention" \
   --type recipe \
   --confidence high \
   --summary "Resolvers validate input before storage calls." \
+  --details - \
   --tag graphql
 ```
 
