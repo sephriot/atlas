@@ -276,6 +276,9 @@ pub struct EnableLocalStorageRequest {
 
     /// Project name
     pub project: String,
+
+    /// Directory where .atlas is created
+    pub root: Option<std::path::PathBuf>,
 }
 
 /// Enable local storage result.
@@ -299,16 +302,14 @@ fn is_zero(n: &usize) -> bool {
 /// Creates .atlas/ in project root with reverse symlink from ~/.atlas.
 /// This makes atoms version-controllable via git.
 ///
-/// Project root is determined by (in order):
-/// 1. ATLAS_PROJECT_ROOT env var (set via --project-root CLI arg)
-/// 2. Current working directory
+/// Project root is the request root or the current working directory.
 pub fn enable_local_storage(
     req: EnableLocalStorageRequest,
 ) -> Result<EnableLocalStorageResult, AtlasError> {
     validate_name(&req.org)?;
     validate_name(&req.project)?;
 
-    let project_root = get_project_root()?;
+    let project_root = get_project_root(req.root)?;
     let mut symlink_created = false;
     let mut atoms_migrated = 0usize;
 
@@ -513,10 +514,9 @@ pub fn get_context() -> Result<ContextInfo, AtlasError> {
 
 /// Get project root directory for repo storage mode.
 ///
-/// Returns ATLAS_PROJECT_ROOT env var if set, otherwise current directory.
-fn get_project_root() -> Result<std::path::PathBuf, AtlasError> {
-    if let Ok(path) = std::env::var("ATLAS_PROJECT_ROOT") {
-        let path = std::path::PathBuf::from(path);
+/// Returns the requested root, or the current directory.
+fn get_project_root(root: Option<std::path::PathBuf>) -> Result<std::path::PathBuf, AtlasError> {
+    if let Some(path) = root {
         if !path.exists() {
             return Err(AtlasError::Validation(format!(
                 "Project root does not exist: {}",
@@ -621,11 +621,10 @@ mod tests {
             .expect("broken symlink should be created");
 
         let _storage_guard = EnvVarGuard::set("ATLAS_STORAGE", &storage_root);
-        let _project_root_guard = EnvVarGuard::set("ATLAS_PROJECT_ROOT", &project_root);
-
         let result = enable_local_storage(EnableLocalStorageRequest {
             org: "acme".to_string(),
             project: "atlas".to_string(),
+            root: Some(project_root.clone()),
         })
         .expect("enable_local_storage should repair broken symlink");
 

@@ -72,7 +72,7 @@ fn ensure_not_broken_symlink(path: &Path, org: &str, project: &str) -> Result<()
             .unwrap_or_else(|_| "<unknown>".to_string());
 
         return Err(AtlasError::Storage(format!(
-            "Broken local-storage symlink for {org}/{project}: {} -> {} (target missing). Run `atlas enable-local --org {org} --project {project}` to recreate it.",
+            "Broken local-storage symlink for {org}/{project}: {} -> {} (target missing). Run `atlas --org {org} --project {project} enable-local` to recreate it.",
             path.display(),
             target
         )));

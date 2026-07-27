@@ -94,12 +94,13 @@ cat notes.md | atlas create \
 | `instructions` | Print agent instructions for using Atlas |
 | `enable-local` | Use repo-local `.atlas/` storage for a project |
 
-Updates are explicit: use `atlas update --id <atom-id> ...`. Atlas does not match
+Updates are explicit: use `atlas update <atom-id> ...`. Atlas does not match
 atoms by title because titles are mutable metadata, not stable identity.
 
 Updates are patches: fields omitted from the command stay unchanged. Use
-`--clear-details`, `--clear-tags`, `--clear-sources`, `--clear-pitfalls`, or
-`--clear-links` to remove stored data. Delete refuses atoms with inbound links
+`--clear details`, `--clear tags`, `--clear sources`, or `--clear pitfalls` to
+remove stored data. Use `atlas link` and `atlas unlink` to change atom links.
+Delete refuses atoms with inbound links
 unless `--force` is explicit.
 
 Global options:
@@ -108,7 +109,6 @@ Global options:
 atlas --org my-company --project my-service search "error handling"
 atlas --storage /path/to/knowledge atoms
 atlas --format json search "auth"
-atlas --json get K-000001
 ```
 
 ## Atom Model
@@ -182,7 +182,10 @@ Default central storage:
 Repo-local storage:
 
 ```bash
-atlas enable-local --org my-company --project my-service
+atlas enable-local
+
+# Or choose a different repo root and explicit context
+atlas --org my-company --project my-service enable-local --root /path/to/repo
 ```
 
 This creates:
@@ -202,7 +205,6 @@ This creates:
 |----------|-------------|
 | `ATLAS_ORG` | Override organization |
 | `ATLAS_PROJECT` | Override project |
-| `ATLAS_PROJECT_ROOT` | Project root for local storage |
 | `ATLAS_CWD` | Override working directory for git context detection |
 | `ATLAS_STORAGE` | Override storage root, default `~/.atlas` |
 

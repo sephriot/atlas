@@ -68,7 +68,7 @@ def apply_edits(atom, args):
 
 
 def build_command(atom_id, atom, details_path):
-    command = ["atlas", "update", "--id", atom_id,
+    command = ["atlas", "update", atom_id,
                "--title", atom["title"],
                "--type", atom["type"],
                "--confidence", atom["confidence"],
@@ -78,11 +78,24 @@ def build_command(atom_id, atom, details_path):
         command += ["--tag", tag]
     for source in atom["sources"]:
         command += ["--source", source]
-    for link in atom["links"]:
-        command += ["--link", link]
     for pitfall in atom["pitfalls"]:
         command += ["--pitfall", pitfall]
     return command
+
+
+def rewrite_links(atom_id, before, after):
+    for link in before:
+        if link not in after:
+            command = ["atlas", "unlink", atom_id, link]
+            proc = subprocess.run(command, capture_output=True, text=True)
+            if proc.returncode != 0:
+                raise SystemExit("unlink failed: %s" % proc.stderr.strip())
+    for link in after:
+        if link not in before:
+            command = ["atlas", "link", atom_id, link]
+            proc = subprocess.run(command, capture_output=True, text=True)
+            if proc.returncode != 0:
+                raise SystemExit("link failed: %s" % proc.stderr.strip())
 
 
 def main():
@@ -132,6 +145,8 @@ def main():
                               stdin=stdin, capture_output=True, text=True)
     if proc.returncode != 0:
         raise SystemExit("update failed: %s" % proc.stderr.strip())
+
+    rewrite_links(args.id, before["links"], after["links"])
 
     verify = read_atom(args.id)
     drift = [f for f in ROUNDTRIP if verify[f] != after[f]]

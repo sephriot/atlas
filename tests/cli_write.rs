@@ -152,7 +152,7 @@ fn create_with_summary_does_not_wait_for_open_stdin() {
 }
 
 #[test]
-fn update_requires_id_and_updates_that_atom() {
+fn update_uses_positional_id_and_preserves_omitted_fields() {
     let temp = TempDir::new("update-by-id");
 
     let mut create = atlas(temp.path());
@@ -193,24 +193,8 @@ fn update_requires_id_and_updates_that_atom() {
     link.args(["link", id, target_id]);
     run_json(link);
 
-    let mut missing_id = atlas(temp.path());
-    missing_id.args([
-        "update",
-        "--title",
-        "No ID",
-        "--type",
-        "note",
-        "--confidence",
-        "medium",
-        "--summary",
-        "Should fail",
-    ]);
-    let output = missing_id.output().expect("command should run");
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("--id"));
-
     let mut update = atlas(temp.path());
-    update.args(["update", "--id", id, "--summary", "Updated summary"]);
+    update.args(["update", id, "--summary", "Updated summary"]);
     let updated = run_json(update);
     assert_eq!(updated["created"], false);
     assert_eq!(updated["id"], id);
@@ -228,6 +212,63 @@ fn update_requires_id_and_updates_that_atom() {
         .next()
         .expect("target ID should include an atom ID");
     assert_eq!(atom["links"], serde_json::json!([target_link]));
+}
+
+#[test]
+fn update_clears_multiple_fields_with_clear_values() {
+    let temp = TempDir::new("update-clear-values");
+
+    let mut create = atlas(temp.path());
+    create.args([
+        "create",
+        "--title",
+        "Clearable",
+        "--type",
+        "note",
+        "--confidence",
+        "high",
+        "--summary",
+        "Summary",
+        "--details",
+        "Details",
+        "--tag",
+        "one",
+        "--source",
+        "src/one.rs",
+    ]);
+    let created = run_json(create);
+    let id = created["id"].as_str().expect("id should be a string");
+
+    let mut update = atlas(temp.path());
+    update.args([
+        "update", "--clear", "details", "--clear", "tags", "--clear", "sources", id,
+    ]);
+    run_json(update);
+
+    let mut get = atlas(temp.path());
+    get.args(["get", id]);
+    let atom = run_json(get);
+    assert!(atom.get("details").is_none());
+    assert!(atom.get("tags").is_none());
+    assert!(atom.get("sources").is_none());
+}
+
+#[test]
+fn enable_local_uses_normal_context_and_a_command_specific_root() {
+    let temp = TempDir::new("enable-local-context");
+    let root = temp.path().join("repo");
+    std::fs::create_dir_all(&root).expect("project root should be created");
+
+    let mut enable = atlas(temp.path());
+    enable.args([
+        "enable-local",
+        "--root",
+        root.to_str().expect("project root should be UTF-8"),
+    ]);
+    let result = run_json(enable);
+
+    assert_eq!(result["path"], root.join(".atlas").to_str().unwrap());
+    assert!(root.join(".atlas/index.yaml").exists());
 }
 
 #[test]

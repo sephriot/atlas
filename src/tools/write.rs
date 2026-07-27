@@ -135,8 +135,6 @@ pub struct AtomUpdateRequest {
     pub clear_tags: bool,
     pub sources: Option<Vec<String>>,
     pub clear_sources: bool,
-    pub links: Option<Vec<String>>,
-    pub clear_links: bool,
 }
 
 /// Atom write response.
@@ -157,10 +155,6 @@ pub fn update_atom(id: String, req: AtomUpdateRequest) -> Result<AtomWriteResult
     let detected = detect_context_full()?;
     let ctx = require_explicit_write_context(detected)?;
     let atom_ref = parse_atom_reference(&id, &ctx);
-
-    if let Some(ref links) = req.links {
-        validate_links(&atom_ref.org, links, &ctx)?;
-    }
 
     let _lock = ProjectLock::acquire(&atom_ref.org, &atom_ref.project)?;
     let mut atom = read_atom(&atom_ref.org, &atom_ref.project, &atom_ref.id)?;
@@ -186,7 +180,6 @@ pub fn update_atom(id: String, req: AtomUpdateRequest) -> Result<AtomWriteResult
     apply_vec_update(&mut atom.pitfalls, req.pitfalls, req.clear_pitfalls);
     apply_vec_update(&mut atom.tags, req.tags, req.clear_tags);
     apply_vec_update(&mut atom.sources, req.sources, req.clear_sources);
-    apply_vec_update(&mut atom.links, req.links, req.clear_links);
     atom.updated_at = Utc::now().date_naive();
 
     write_atom(&atom_ref.org, &atom_ref.project, &atom)?;

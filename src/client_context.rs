@@ -62,12 +62,12 @@ WORKFLOW:
 1. Verify context: `atlas context`.
 2. Search the current project: `atlas search "<query>"`.
 3. Read full atoms: `atlas get <id>`.
-4. Record reusable knowledge with `atlas create`; use `atlas update --id <id> --summary "..."` for a patch.
+4. Record reusable knowledge with `atlas create`; use `atlas update <id> --summary "..."` for a patch.
 
 SAFETY:
 - Writes require a context detected from CLI flags, local storage, or git. If context is fallback, rerun with `--org <org> --project <project>`.
 - Search is current-project by default. Use `--scope <org>` to search across an organization.
-- Updates preserve omitted fields. Use `--clear-details`, `--clear-tags`, `--clear-sources`, `--clear-pitfalls`, or `--clear-links` to remove data.
+- Updates preserve omitted fields. Use `--clear details`, `--clear tags`, `--clear sources`, or `--clear pitfalls` to remove data.
 - Delete refuses atoms with inbound links unless `--force` is explicit.
 "#;
 
@@ -77,7 +77,7 @@ WORKFLOW (optimized for Claude Code):
 1. SEARCH first - Run `atlas search "<query>"` before planning work
 2. READ full atoms - Run `atlas get <id>` for each relevant result
 3. APPLY knowledge - Let retrieved atoms constrain your approach
-4. RECORD learnings - After completing work, run `atlas create` for new atoms or `atlas update --id <id>` for existing atoms
+4. RECORD learnings - After completing work, run `atlas create` for new atoms or `atlas update <id>` for existing atoms
 5. LINK related atoms - Connect related knowledge with `atlas link`
 
 Use Atlas proactively: search before planning, record after learning.
@@ -100,7 +100,7 @@ LINKING:
 
 CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallback. Use `atlas context` to verify. Fallback context is read-only; rerun mutations with `--org <org> --project <project>`.
 
-SAFETY: Search is current-project by default; use `--scope <org>` for cross-project discovery. Updates preserve omitted fields and use `--clear-*` to remove data. Delete requires `--force` when inbound links exist.
+SAFETY: Search is current-project by default; use `--scope <org>` for cross-project discovery. Updates preserve omitted fields and use `--clear <field>` to remove data. Delete requires `--force` when inbound links exist.
 
 CITATION: Reference atom IDs in reasoning, e.g., [K-000042]
 
@@ -115,7 +115,7 @@ WORKFLOW (optimized for IDE assistants):
 1. SEARCH - Run `atlas search "<query>"` when users ask about patterns or conventions
 2. GET - Run `atlas get <id>` for detailed guidance
 3. APPLY - Use retrieved knowledge to inform code suggestions
-4. RECORD - Capture useful patterns with `atlas create`, or revise known patterns with `atlas update --id <id>`
+4. RECORD - Capture useful patterns with `atlas create`, or revise known patterns with `atlas update <id>`
 
 Focus on code patterns, conventions, and project-specific knowledge.
 
@@ -129,7 +129,7 @@ ATOM IDs: Commands accept full path, project/id, or bare id.
 
 CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallback. Use `atlas context`. Fallback context is read-only; rerun mutations with `--org <org> --project <project>`.
 
-SAFETY: Search is current-project by default; use `--scope <org>` for cross-project discovery. Updates preserve omitted fields and use `--clear-*` to remove data. Delete requires `--force` when inbound links exist.
+SAFETY: Search is current-project by default; use `--scope <org>` for cross-project discovery. Updates preserve omitted fields and use `--clear <field>` to remove data. Delete requires `--force` when inbound links exist.
 
 PIPE-FRIENDLY USAGE:
 - Pipe text into `atlas search` when the query is already available on stdin
@@ -151,7 +151,7 @@ ATOM IDs: Full path (org/project/id), project/id, or bare id
 
 CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallback. Fallback context is read-only; rerun mutations with `--org <org> --project <project>`.
 
-SAFETY: Search is current-project by default; use `--scope <org>` for cross-project discovery. Updates preserve omitted fields and use `--clear-*` to remove data. Delete requires `--force` when inbound links exist.
+SAFETY: Search is current-project by default; use `--scope <org>` for cross-project discovery. Updates preserve omitted fields and use `--clear <field>` to remove data. Delete requires `--force` when inbound links exist.
 
 PIPE-FRIENDLY USAGE:
 - `printf '%s\n' "$TASK" | atlas search --page-size 10`

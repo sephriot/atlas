@@ -1,10 +1,12 @@
 use std::fmt;
 use std::io::{self, IsTerminal, Read};
+use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::client_context::ClientContext;
+use crate::context::{detect_context_full, require_explicit_write_context};
 use crate::error::AtlasError;
 use crate::models::{AtomType, Confidence};
 use crate::tools::{
@@ -110,7 +112,6 @@ pub enum Commands {
     /// Update an existing atom by ID
     Update {
         /// Atom ID to update (org/project/id, project/id, or bare id)
-        #[arg(long)]
         id: String,
 
         #[command(flatten)]
@@ -160,13 +161,9 @@ pub enum Commands {
 
     /// Enable local storage for a project
     EnableLocal {
-        /// Organization name
+        /// Directory where .atlas is created (default: current directory)
         #[arg(long)]
-        org: String,
-
-        /// Project name
-        #[arg(long)]
-        project: String,
+        root: Option<PathBuf>,
     },
 }
 
@@ -203,10 +200,6 @@ pub struct AtomWriteArgs {
     /// References (can specify multiple)
     #[arg(long)]
     source: Vec<String>,
-
-    /// Related atoms (can specify multiple)
-    #[arg(long)]
-    link: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -226,32 +219,26 @@ pub struct AtomUpdateArgs {
     #[arg(long)]
     details: Option<String>,
 
-    #[arg(long, conflicts_with = "details")]
-    clear_details: bool,
-
     #[arg(long)]
     pitfall: Vec<String>,
-
-    #[arg(long, conflicts_with = "pitfall")]
-    clear_pitfalls: bool,
 
     #[arg(long, short = 'T')]
     tag: Vec<String>,
 
-    #[arg(long, conflicts_with = "tag")]
-    clear_tags: bool,
-
     #[arg(long)]
     source: Vec<String>,
 
-    #[arg(long, conflicts_with = "source")]
-    clear_sources: bool,
-
+    /// Field to clear (can specify multiple)
     #[arg(long)]
-    link: Vec<String>,
+    clear: Vec<ClearField>,
+}
 
-    #[arg(long, conflicts_with = "link")]
-    clear_links: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ClearField {
+    Details,
+    Pitfalls,
+    Tags,
+    Sources,
 }
 
 /// Run a CLI command and print output.
@@ -356,8 +343,13 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
                 println!();
             }
         }
-        Commands::EnableLocal { org, project } => {
-            let result = enable_local_storage(EnableLocalStorageRequest { org, project })?;
+        Commands::EnableLocal { root } => {
+            let context = require_explicit_write_context(detect_context_full()?)?;
+            let result = enable_local_storage(EnableLocalStorageRequest {
+                org: context.org,
+                project: context.project,
+                root,
+            })?;
             print_output(&result, format)?;
         }
     }
@@ -365,13 +357,6 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
 }
 
 fn atom_update_request_from_args(args: AtomUpdateArgs) -> Result<AtomUpdateRequest, AtlasError> {
-    let details_from_stdin = args.details.as_deref() == Some("-");
-    let details = match args.details {
-        Some(details) if details == "-" => Some(read_stdin()?),
-        Some(details) => Some(details),
-        None => None,
-    };
-
     if args.summary.as_deref() == Some("-") {
         return Err(AtlasError::Validation(
             "Use --details - for update stdin input; --summary - is not supported for patch updates."
@@ -379,11 +364,13 @@ fn atom_update_request_from_args(args: AtomUpdateArgs) -> Result<AtomUpdateReque
         ));
     }
 
-    if details_from_stdin && args.clear_details {
-        return Err(AtlasError::Validation(
-            "--details and --clear-details cannot be used together".to_string(),
-        ));
-    }
+    validate_update_clear_conflicts(&args)?;
+    let details = match args.details {
+        Some(details) if details == "-" => Some(read_stdin()?),
+        Some(details) => Some(details),
+        None => None,
+    };
+    let clears = |field| args.clear.contains(&field);
 
     let request = AtomUpdateRequest {
         title: args.title,
@@ -391,15 +378,13 @@ fn atom_update_request_from_args(args: AtomUpdateArgs) -> Result<AtomUpdateReque
         confidence: args.confidence,
         summary: args.summary,
         details,
-        clear_details: args.clear_details,
+        clear_details: clears(ClearField::Details),
         pitfalls: (!args.pitfall.is_empty()).then_some(args.pitfall),
-        clear_pitfalls: args.clear_pitfalls,
+        clear_pitfalls: clears(ClearField::Pitfalls),
         tags: (!args.tag.is_empty()).then_some(args.tag),
-        clear_tags: args.clear_tags,
+        clear_tags: clears(ClearField::Tags),
         sources: (!args.source.is_empty()).then_some(args.source),
-        clear_sources: args.clear_sources,
-        links: (!args.link.is_empty()).then_some(args.link),
-        clear_links: args.clear_links,
+        clear_sources: clears(ClearField::Sources),
     };
 
     if request.title.is_none()
@@ -414,8 +399,6 @@ fn atom_update_request_from_args(args: AtomUpdateArgs) -> Result<AtomUpdateReque
         && !request.clear_tags
         && request.sources.is_none()
         && !request.clear_sources
-        && request.links.is_none()
-        && !request.clear_links
     {
         return Err(AtlasError::Validation(
             "Provide at least one field to update or clear.".to_string(),
@@ -423,6 +406,33 @@ fn atom_update_request_from_args(args: AtomUpdateArgs) -> Result<AtomUpdateReque
     }
 
     Ok(request)
+}
+
+fn validate_update_clear_conflicts(args: &AtomUpdateArgs) -> Result<(), AtlasError> {
+    let clear = |field| args.clear.contains(&field);
+    let conflicts = [
+        (
+            clear(ClearField::Details) && args.details.is_some(),
+            "details",
+        ),
+        (
+            clear(ClearField::Pitfalls) && !args.pitfall.is_empty(),
+            "pitfalls",
+        ),
+        (clear(ClearField::Tags) && !args.tag.is_empty(), "tags"),
+        (
+            clear(ClearField::Sources) && !args.source.is_empty(),
+            "sources",
+        ),
+    ];
+
+    if let Some((_, field)) = conflicts.into_iter().find(|(conflicts, _)| *conflicts) {
+        return Err(AtlasError::Validation(format!(
+            "Cannot set and clear {field} in one update."
+        )));
+    }
+
+    Ok(())
 }
 
 fn atom_write_request_from_args(args: AtomWriteArgs) -> Result<AtomWriteRequest, AtlasError> {
@@ -448,11 +458,7 @@ fn atom_write_request_from_args(args: AtomWriteArgs) -> Result<AtomWriteRequest,
         } else {
             Some(args.source)
         },
-        links: if args.link.is_empty() {
-            None
-        } else {
-            Some(args.link)
-        },
+        links: None,
     })
 }
 

@@ -96,6 +96,8 @@ are stored literally instead of being executed.
 Other flags: `--title`, `--summary`, `--type`, `--confidence`, `--add-tag`,
 `--remove-tag`, `--add-source`, `--remove-source`, `--add-link`, `--remove-link`.
 
+The helper changes links through `atlas link` and `atlas unlink`; create and update do not accept inline link fields.
+
 ## 6. Prune
 
 Deleting is the only irreversible step in this skill.

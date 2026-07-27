@@ -36,17 +36,9 @@ struct Cli {
     #[arg(long, global = true, requires = "org")]
     project: Option<String>,
 
-    /// Project root directory for repo storage mode (where .atlas/ is created)
-    #[arg(long, global = true)]
-    project_root: Option<PathBuf>,
-
     /// Output format
     #[arg(long, short = 'f', global = true, default_value_t = OutputFormat::Yaml)]
     format: OutputFormat,
-
-    /// Output as JSON instead of YAML (deprecated; use --format json)
-    #[arg(long, global = true)]
-    json: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -65,16 +57,5 @@ fn main() -> anyhow::Result<()> {
         std::env::set_var("ATLAS_PROJECT", project);
     }
 
-    // Set project root for repo storage mode
-    if let Some(ref path) = cli.project_root {
-        std::env::set_var("ATLAS_PROJECT_ROOT", path);
-    }
-
-    let format = if cli.json {
-        OutputFormat::Json
-    } else {
-        cli.format
-    };
-
-    cli::run(cli.command, format)
+    cli::run(cli.command, cli.format)
 }

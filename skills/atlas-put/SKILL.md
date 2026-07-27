@@ -44,7 +44,7 @@ Recording to the wrong project makes knowledge unfindable.
 
 1. **Search first** - Avoid duplicates with `atlas search <query>` or pipe generated notes into `atlas search`
 2. **Evaluate** - Is this reusable, non-obvious, stable, actionable?
-3. **Create atom** with `atlas create`, or revise an existing atom with `atlas update --id <id>`, preferring stdin for long or already-generated text:
+3. **Create atom** with `atlas create`, or revise an existing atom with `atlas update <id>`, preferring stdin for long or already-generated text:
    - `--title`: Clear, searchable name (required)
    - `--type`: gotcha, recipe, decision, or note (required)
    - `--confidence`: high, medium, or low (required)
@@ -55,8 +55,8 @@ Recording to the wrong project makes knowledge unfindable.
 4. **Link related atoms** with `atlas link <SOURCE> <TARGET>` if applicable
 
 **`atlas update` is a patch.** Omitted fields stay unchanged. Use
-`--clear-details`, `--clear-tags`, `--clear-sources`, `--clear-pitfalls`, or
-`--clear-links` to remove stored data intentionally.
+`--clear details`, `--clear tags`, `--clear sources`, or `--clear pitfalls` to
+remove stored data intentionally. Manage links with `atlas link` and `atlas unlink`.
 
 ## Stdin and Pipe Preference
 
@@ -74,7 +74,7 @@ Atlas stdin behavior:
 - `atlas create --summary "..." --details -` reads piped stdin as `details`
 - `atlas create --summary -` reads stdin as the summary explicitly
 - Only one of `--summary -` or `--details -` should consume stdin
-- Updates use `atlas update --id <atom-id>`, and the ID is the only identity — titles are not
+- Updates use `atlas update <atom-id>`, and the ID is the only identity — titles are not
 - Updates accept only the fields being changed; `--details -` remains the explicit stdin path for updates
 
 ## CLI Commands
@@ -135,7 +135,7 @@ git show --stat --oneline HEAD | atlas create \
 
 **Revise an existing atom:**
 ```bash
-cat notes.md | atlas update --id K-000012 \
+cat notes.md | atlas update K-000012 \
   --details -
 ```
 
