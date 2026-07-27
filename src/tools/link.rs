@@ -1,13 +1,13 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::context::{detect_context_full, require_explicit_write_context};
+use crate::context::{detect_context_full, require_explicit_write_context, ProjectContext};
 use crate::error::AtlasError;
 use crate::locking::ProjectLock;
-use crate::models::IndexEntry;
+use crate::models::{Atom, IndexEntry};
 use crate::storage::{load_index, read_atom, save_index, write_atom};
 
-use super::reference::{format_atom_reference, parse_atom_reference};
+use super::reference::{format_atom_reference, parse_atom_reference, AtomRef};
 
 // ============================================================================
 // Request/Response types
@@ -32,7 +32,7 @@ pub struct LinkResponse {
     /// Full target reference: "org/project/K-000001"
     pub target: String,
 
-    /// False if link already existed
+    /// False if both atoms already referenced each other
     pub created: bool,
 }
 
@@ -45,7 +45,7 @@ pub struct UnlinkResponse {
     /// Full target reference: "org/project/K-000001"
     pub target: String,
 
-    /// False if link didn't exist
+    /// False if neither atom referenced the other
     pub removed: bool,
 }
 
@@ -64,71 +64,111 @@ fn format_link_for_storage(source_project: &str, target_project: &str, target_id
     }
 }
 
-// ============================================================================
-// Link tool
-// ============================================================================
+/// Lock every project a link touches, ordered so two concurrent links over the
+/// same pair cannot each hold the lock the other waits for.
+fn lock_projects(refs: [&AtomRef; 2]) -> Result<Vec<ProjectLock>, AtlasError> {
+    let mut scopes: Vec<(&str, &str)> = refs
+        .iter()
+        .map(|r| (r.org.as_str(), r.project.as_str()))
+        .collect();
+    scopes.sort_unstable();
+    scopes.dedup();
+    scopes
+        .into_iter()
+        .map(|(org, project)| ProjectLock::acquire(org, project))
+        .collect()
+}
 
-/// Create a directed link from source atom to target atom.
-pub fn link(req: LinkRequest) -> Result<LinkResponse, AtlasError> {
+/// Stored links predate the current format rules, so compare what a link
+/// resolves to rather than how it was written.
+fn references(atom: &Atom, owner: &ProjectContext, target: &AtomRef) -> bool {
+    atom.links
+        .iter()
+        .any(|link| parse_atom_reference(link, owner) == *target)
+}
+
+fn add_reference(atom: &mut Atom, owner: &ProjectContext, target: &AtomRef) -> bool {
+    if references(atom, owner, target) {
+        return false;
+    }
+    atom.links.push(format_link_for_storage(
+        &owner.project,
+        &target.project,
+        &target.id,
+    ));
+    true
+}
+
+fn remove_reference(atom: &mut Atom, owner: &ProjectContext, target: &AtomRef) -> bool {
+    let before = atom.links.len();
+    atom.links
+        .retain(|link| parse_atom_reference(link, owner) != *target);
+    atom.links.len() != before
+}
+
+fn save_atom(atom_ref: &AtomRef, atom: &mut Atom) -> Result<(), AtlasError> {
+    atom.updated_at = Utc::now().date_naive();
+    write_atom(&atom_ref.org, &atom_ref.project, atom)?;
+
+    let mut index = load_index(&atom_ref.org, &atom_ref.project)?;
+    index.insert_or_replace_entry(IndexEntry::from_atom(atom));
+    save_index(&atom_ref.org, &atom_ref.project, &index)
+}
+
+fn owner_context(atom_ref: &AtomRef) -> ProjectContext {
+    ProjectContext::new(atom_ref.org.clone(), atom_ref.project.clone())
+}
+
+fn resolve_pair(req: &LinkRequest) -> Result<(AtomRef, AtomRef), AtlasError> {
     let ctx = require_explicit_write_context(detect_context_full()?)?;
-
-    // Parse source and target with full path support
     let source_ref = parse_atom_reference(&req.source, &ctx);
     let target_ref = parse_atom_reference(&req.target, &ctx);
 
-    // Validate: can't link to self
-    if source_ref.org == target_ref.org
-        && source_ref.project == target_ref.project
-        && source_ref.id == target_ref.id
-    {
-        return Err(AtlasError::Validation(
-            "Cannot link an atom to itself".into(),
-        ));
-    }
-
-    // Validate: both atoms must be in the same org
     if source_ref.org != target_ref.org {
         return Err(AtlasError::Validation(
             "Cannot link atoms across different organizations".into(),
         ));
     }
 
-    // Only lock source project (we only modify source atom)
-    let _lock = ProjectLock::acquire(&source_ref.org, &source_ref.project)?;
+    Ok((source_ref, target_ref))
+}
 
-    // Load source atom for modification
-    let mut source_atom = read_atom(&source_ref.org, &source_ref.project, &source_ref.id)?;
+// ============================================================================
+// Link tool
+// ============================================================================
 
-    // Validate target exists (read-only check)
-    let _ = read_atom(&target_ref.org, &target_ref.project, &target_ref.id)?;
+/// Link two atoms so each one references the other.
+pub fn link(req: LinkRequest) -> Result<LinkResponse, AtlasError> {
+    let (source_ref, target_ref) = resolve_pair(&req)?;
 
-    // Format link relative to source atom's project for storage
-    let link_to_target =
-        format_link_for_storage(&source_ref.project, &target_ref.project, &target_ref.id);
-
-    // Check if link already exists
-    if source_atom.links.contains(&link_to_target) {
-        return Ok(LinkResponse {
-            source: format_atom_reference(&source_ref.org, &source_ref.project, &source_ref.id),
-            target: format_atom_reference(&target_ref.org, &target_ref.project, &target_ref.id),
-            created: false,
-        });
+    if source_ref == target_ref {
+        return Err(AtlasError::Validation(
+            "Cannot link an atom to itself".into(),
+        ));
     }
 
-    // Add link to source atom
-    source_atom.links.push(link_to_target);
-    source_atom.updated_at = Utc::now().date_naive();
-    write_atom(&source_ref.org, &source_ref.project, &source_atom)?;
+    let _locks = lock_projects([&source_ref, &target_ref])?;
 
-    // Update index
-    let mut index = load_index(&source_ref.org, &source_ref.project)?;
-    index.insert_or_replace_entry(IndexEntry::from_atom(&source_atom));
-    save_index(&source_ref.org, &source_ref.project, &index)?;
+    let mut source_atom = read_atom(&source_ref.org, &source_ref.project, &source_ref.id)?;
+    let mut target_atom = read_atom(&target_ref.org, &target_ref.project, &target_ref.id)?;
+
+    let source_ctx = owner_context(&source_ref);
+    let target_ctx = owner_context(&target_ref);
+
+    let forward = add_reference(&mut source_atom, &source_ctx, &target_ref);
+    let backward = add_reference(&mut target_atom, &target_ctx, &source_ref);
+
+    if forward {
+        save_atom(&source_ref, &mut source_atom)?;
+    }
+    if backward {
+        save_atom(&target_ref, &mut target_atom)?;
+    }
 
     Ok(LinkResponse {
         source: format_atom_reference(&source_ref.org, &source_ref.project, &source_ref.id),
         target: format_atom_reference(&target_ref.org, &target_ref.project, &target_ref.id),
-        created: true,
+        created: forward || backward,
     })
 }
 
@@ -136,52 +176,31 @@ pub fn link(req: LinkRequest) -> Result<LinkResponse, AtlasError> {
 // Unlink tool
 // ============================================================================
 
-/// Remove a directed link from source atom to target atom.
+/// Remove the references two atoms hold to each other.
 pub fn unlink(req: LinkRequest) -> Result<UnlinkResponse, AtlasError> {
-    let ctx = require_explicit_write_context(detect_context_full()?)?;
+    let (source_ref, target_ref) = resolve_pair(&req)?;
 
-    // Parse source and target with full path support
-    let source_ref = parse_atom_reference(&req.source, &ctx);
-    let target_ref = parse_atom_reference(&req.target, &ctx);
+    let _locks = lock_projects([&source_ref, &target_ref])?;
 
-    // Validate: both atoms must be in the same org
-    if source_ref.org != target_ref.org {
-        return Err(AtlasError::Validation(
-            "Cannot unlink atoms across different organizations".into(),
-        ));
+    let mut source_atom = read_atom(&source_ref.org, &source_ref.project, &source_ref.id)?;
+    let forward = remove_reference(&mut source_atom, &owner_context(&source_ref), &target_ref);
+    if forward {
+        save_atom(&source_ref, &mut source_atom)?;
     }
 
-    // Only lock source project (we only modify source atom)
-    let _lock = ProjectLock::acquire(&source_ref.org, &source_ref.project)?;
-
-    // Load source atom for modification
-    let mut source_atom = read_atom(&source_ref.org, &source_ref.project, &source_ref.id)?;
-
-    // Format link relative to source atom's project
-    // Note: No target validation - allows cleaning up dangling links if target was deleted
-    let link_to_target =
-        format_link_for_storage(&source_ref.project, &target_ref.project, &target_ref.id);
-
-    // Remove link if present
-    let removed = if let Some(pos) = source_atom.links.iter().position(|l| l == &link_to_target) {
-        source_atom.links.remove(pos);
-        source_atom.updated_at = Utc::now().date_naive();
-        write_atom(&source_ref.org, &source_ref.project, &source_atom)?;
-
-        // Update index
-        let mut index = load_index(&source_ref.org, &source_ref.project)?;
-        index.insert_or_replace_entry(IndexEntry::from_atom(&source_atom));
-        save_index(&source_ref.org, &source_ref.project, &index)?;
-
-        true
-    } else {
-        false
-    };
+    // A deleted target still leaves its half behind, so its absence is not an error.
+    let mut backward = false;
+    if let Ok(mut target_atom) = read_atom(&target_ref.org, &target_ref.project, &target_ref.id) {
+        backward = remove_reference(&mut target_atom, &owner_context(&target_ref), &source_ref);
+        if backward {
+            save_atom(&target_ref, &mut target_atom)?;
+        }
+    }
 
     Ok(UnlinkResponse {
         source: format_atom_reference(&source_ref.org, &source_ref.project, &source_ref.id),
         target: format_atom_reference(&target_ref.org, &target_ref.project, &target_ref.id),
-        removed,
+        removed: forward || backward,
     })
 }
 
@@ -192,6 +211,23 @@ pub fn unlink(req: LinkRequest) -> Result<UnlinkResponse, AtlasError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{AtomType, Confidence};
+
+    fn atom_ref(project: &str, id: &str) -> AtomRef {
+        AtomRef::new("acme".to_string(), project.to_string(), id.to_string())
+    }
+
+    fn atom_with_links(links: &[&str]) -> Atom {
+        let mut atom = Atom::new(
+            "K-000001".to_string(),
+            "Title".to_string(),
+            AtomType::Note,
+            Confidence::High,
+            "Summary".to_string(),
+        );
+        atom.links = links.iter().map(|l| l.to_string()).collect();
+        atom
+    }
 
     #[test]
     fn test_format_link_for_storage_same_project() {
@@ -203,5 +239,54 @@ mod tests {
     fn test_format_link_for_storage_cross_project() {
         let link = format_link_for_storage("project-a", "project-b", "K-000001");
         assert_eq!(link, "project-b/K-000001");
+    }
+
+    #[test]
+    fn test_add_reference_uses_storage_format_of_the_owner() {
+        let owner = ProjectContext::new("acme".to_string(), "atlas".to_string());
+        let mut atom = atom_with_links(&[]);
+
+        assert!(add_reference(
+            &mut atom,
+            &owner,
+            &atom_ref("atlas", "K-000002")
+        ));
+        assert!(add_reference(
+            &mut atom,
+            &owner,
+            &atom_ref("other", "K-000003")
+        ));
+        assert_eq!(atom.links, vec!["K-000002", "other/K-000003"]);
+    }
+
+    #[test]
+    fn test_add_reference_recognizes_an_equivalent_stored_form() {
+        let owner = ProjectContext::new("acme".to_string(), "atlas".to_string());
+        let mut atom = atom_with_links(&["acme/atlas/K-000002"]);
+
+        assert!(!add_reference(
+            &mut atom,
+            &owner,
+            &atom_ref("atlas", "K-000002")
+        ));
+        assert_eq!(atom.links, vec!["acme/atlas/K-000002"]);
+    }
+
+    #[test]
+    fn test_remove_reference_matches_any_stored_form() {
+        let owner = ProjectContext::new("acme".to_string(), "atlas".to_string());
+        let mut atom = atom_with_links(&["acme/atlas/K-000002", "K-000003"]);
+
+        assert!(remove_reference(
+            &mut atom,
+            &owner,
+            &atom_ref("atlas", "K-000002")
+        ));
+        assert_eq!(atom.links, vec!["K-000003"]);
+        assert!(!remove_reference(
+            &mut atom,
+            &owner,
+            &atom_ref("atlas", "K-000009")
+        ));
     }
 }

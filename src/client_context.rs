@@ -60,15 +60,17 @@ const INSTRUCTIONS_AGENT: &str = r#"Atlas CLI - Long-term memory for coding agen
 
 WORKFLOW:
 1. Verify context: `atlas context`.
-2. Search the current project: `atlas search "<query>"`.
+2. Search: `atlas search "<query>"` covers the org, current project first.
 3. Read full atoms: `atlas get <id>`.
 4. Record reusable knowledge with `atlas create`; use `atlas update <id> --summary "..."` for a patch.
 
 SAFETY:
 - Writes require a context detected from CLI flags, local storage, or git. If context is fallback, rerun with `--org <org> --project <project>`.
-- Search is current-project by default. Use `--scope <org>` to search across an organization.
+- Search covers the whole org by default, ranking the current project first. Use `--scope <org>/<project>` to narrow to one project.
 - Updates preserve omitted fields. Use `--clear details`, `--clear tags`, `--clear sources`, or `--clear pitfalls` to remove data.
-- Delete refuses atoms with inbound links unless `--force` is explicit.
+- `atlas link` and `atlas unlink` write both atoms: linked atoms reference each other. `create --link <id>` records an atom with its edges in one command.
+- Update reports the atom's edges back; rewriting what it says can outdate why it was linked, so re-read them and unlink what no longer holds.
+- Delete unlinks the atom from everything that referenced it, and reports what it detached.
 "#;
 
 const INSTRUCTIONS_CLAUDE_CODE: &str = r#"Atlas CLI - Long-term memory for AI agents.
@@ -78,7 +80,7 @@ WORKFLOW (optimized for Claude Code):
 2. READ full atoms - Run `atlas get <id>` for each relevant result
 3. APPLY knowledge - Let retrieved atoms constrain your approach
 4. RECORD learnings - After completing work, run `atlas create` for new atoms or `atlas update <id>` for existing atoms
-5. LINK related atoms - Connect related knowledge with `atlas link`
+5. LINK related atoms - Pass `--link <id>` to create, or connect existing atoms with `atlas link`
 
 Use Atlas proactively: search before planning, record after learning.
 
@@ -94,13 +96,13 @@ ATOM IDs:
 - Cross-project/org operations use full paths
 
 LINKING:
-- Use link/unlink to create directed connections between atoms
-- Links are directed: A links to B does NOT mean B links to A
-- Cross-project links supported within same org
+- `atlas link A B` makes A and B reference each other; `atlas unlink A B` clears both; `create --link` does it as the atom is written
+- One call is enough: a link is followable from either end, so no reverse call is needed
+- Cross-project links supported within same org; link a sibling project's atom so work there is findable from here
 
 CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallback. Use `atlas context` to verify. Fallback context is read-only; rerun mutations with `--org <org> --project <project>`.
 
-SAFETY: Search is current-project by default; use `--scope <org>` for cross-project discovery. Updates preserve omitted fields and use `--clear <field>` to remove data. Delete requires `--force` when inbound links exist.
+SAFETY: Search spans the org by default and ranks the current project first; use `--scope <org>/<project>` to narrow. Updates preserve omitted fields and use `--clear <field>` to remove data. Links are mutual: create --link, link and unlink all write both atoms. Update reports the edges it left behind, to be re-read against the new text. Delete unlinks the atom from everything that referenced it.
 
 CITATION: Reference atom IDs in reasoning, e.g., [K-000042]
 
@@ -129,7 +131,7 @@ ATOM IDs: Commands accept full path, project/id, or bare id.
 
 CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallback. Use `atlas context`. Fallback context is read-only; rerun mutations with `--org <org> --project <project>`.
 
-SAFETY: Search is current-project by default; use `--scope <org>` for cross-project discovery. Updates preserve omitted fields and use `--clear <field>` to remove data. Delete requires `--force` when inbound links exist.
+SAFETY: Search spans the org by default and ranks the current project first; use `--scope <org>/<project>` to narrow. Updates preserve omitted fields and use `--clear <field>` to remove data. Links are mutual: create --link, link and unlink all write both atoms. Update reports the edges it left behind, to be re-read against the new text. Delete unlinks the atom from everything that referenced it.
 
 PIPE-FRIENDLY USAGE:
 - Pipe text into `atlas search` when the query is already available on stdin
@@ -141,7 +143,7 @@ WORKFLOW (optimized for Codex CLI):
 1. SEARCH - Query relevant context before generating code: `atlas search "<query>"`
 2. GET - Retrieve full atoms for detailed patterns: `atlas get <id>`
 3. RECORD - Record reusable patterns after successful work: `atlas create ...`
-4. LINK - Connect related knowledge atoms: `atlas link <source> <target>`
+4. LINK - Pass `--link <id>` to create, or connect existing atoms: `atlas link <source> <target>`
 
 Prioritize recipes and gotchas for code generation tasks.
 
@@ -151,7 +153,7 @@ ATOM IDs: Full path (org/project/id), project/id, or bare id
 
 CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallback. Fallback context is read-only; rerun mutations with `--org <org> --project <project>`.
 
-SAFETY: Search is current-project by default; use `--scope <org>` for cross-project discovery. Updates preserve omitted fields and use `--clear <field>` to remove data. Delete requires `--force` when inbound links exist.
+SAFETY: Search spans the org by default and ranks the current project first; use `--scope <org>/<project>` to narrow. Updates preserve omitted fields and use `--clear <field>` to remove data. Links are mutual: create --link, link and unlink all write both atoms. Update reports the edges it left behind, to be re-read against the new text. Delete unlinks the atom from everything that referenced it.
 
 PIPE-FRIENDLY USAGE:
 - `printf '%s\n' "$TASK" | atlas search --page-size 10`

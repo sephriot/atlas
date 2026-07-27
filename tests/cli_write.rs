@@ -32,16 +32,69 @@ impl Drop for TempDir {
 }
 
 fn atlas(storage: &Path) -> Command {
+    atlas_in(storage, "atlas")
+}
+
+fn atlas_in(storage: &Path, project: &str) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_atlas"));
     cmd.arg("--storage")
         .arg(storage)
         .arg("--org")
         .arg("acme")
         .arg("--project")
-        .arg("atlas")
+        .arg(project)
         .arg("--format")
         .arg("json");
     cmd
+}
+
+fn note(storage: &Path, project: &str, title: &str) -> String {
+    let mut create = atlas_in(storage, project);
+    create.args([
+        "create",
+        "--title",
+        title,
+        "--type",
+        "note",
+        "--confidence",
+        "high",
+        "--summary",
+        title,
+    ]);
+    run_json(create)["id"]
+        .as_str()
+        .expect("id should be a string")
+        .to_string()
+}
+
+fn links_of(storage: &Path, id: &str) -> Value {
+    let mut get = atlas(storage);
+    get.args(["get", id]);
+    run_json(get)
+        .get("links")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]))
+}
+
+/// Reproduce a pre-symmetry edge by dropping one atom's half of it.
+fn drop_links(storage: &Path, id: &str) {
+    let parts: Vec<&str> = id.split('/').collect();
+    let path = storage
+        .join("orgs")
+        .join(parts[0])
+        .join(parts[1])
+        .join("atoms")
+        .join(format!("{}.yaml", parts[2]));
+    let text = std::fs::read_to_string(&path).expect("atom file should be readable");
+    let mut atom: serde_yaml::Value = serde_yaml::from_str(&text).expect("atom should be YAML");
+    atom.as_mapping_mut()
+        .expect("atom should be a mapping")
+        .remove("links");
+    std::fs::write(
+        &path,
+        serde_yaml::to_string(&atom).expect("atom should serialize"),
+    )
+    .expect("atom file should be writable");
 }
 
 fn run_json(mut cmd: Command) -> Value {
@@ -301,99 +354,308 @@ fn create_rejects_fallback_context() {
 }
 
 #[test]
-fn search_defaults_to_the_current_project() {
+fn search_spans_the_org_and_ranks_the_current_project_first() {
     let temp = TempDir::new("project-search");
-
-    let mut current = atlas(temp.path());
-    current.args([
-        "create",
-        "--title",
-        "Shared query current",
-        "--type",
-        "note",
-        "--confidence",
-        "high",
-        "--summary",
-        "Shared query",
-    ]);
-    run_json(current);
-
-    let mut other = Command::new(env!("CARGO_BIN_EXE_atlas"));
-    other.args([
-        "--storage",
-        temp.path().to_str().expect("storage path should be UTF-8"),
-        "--org",
-        "acme",
-        "--project",
-        "other",
-        "--format",
-        "json",
-        "create",
-        "--title",
-        "Shared query other",
-        "--type",
-        "note",
-        "--confidence",
-        "high",
-        "--summary",
-        "Shared query",
-    ]);
-    run_json(other);
+    note(temp.path(), "atlas", "Shared query current");
+    note(temp.path(), "other", "Shared query other");
 
     let mut search = atlas(temp.path());
     search.args(["search", "Shared query"]);
     let results = run_json(search);
 
-    assert_eq!(results["total"], 1);
+    assert_eq!(results["total"], 2);
     assert_eq!(results["results"][0]["id"], "acme/atlas/K-000001");
+    assert_eq!(results["results"][1]["id"], "acme/other/K-000001");
+    let local = results["results"][0]["score"].as_f64().expect("score");
+    let sibling = results["results"][1]["score"].as_f64().expect("score");
+    assert!(
+        sibling < local,
+        "sibling project should rank below the current one: {sibling} vs {local}"
+    );
 }
 
 #[test]
-fn delete_rejects_atoms_with_inbound_links_without_force() {
-    let temp = TempDir::new("delete-inbound-links");
+fn search_narrows_to_one_project_when_the_scope_names_it() {
+    let temp = TempDir::new("project-search-scoped");
+    note(temp.path(), "atlas", "Shared query current");
+    note(temp.path(), "other", "Shared query other");
 
-    let mut source = atlas(temp.path());
-    source.args([
+    let mut search = atlas(temp.path());
+    search.args(["search", "Shared query", "--scope", "acme/other"]);
+    let results = run_json(search);
+
+    assert_eq!(results["total"], 1);
+    assert_eq!(results["results"][0]["id"], "acme/other/K-000001");
+}
+
+#[test]
+fn atoms_lists_the_named_org_rather_than_the_current_project() {
+    let temp = TempDir::new("atoms-org-scope");
+    note(temp.path(), "atlas", "Local inventory");
+    note(temp.path(), "other", "Sibling inventory");
+
+    let mut local = atlas(temp.path());
+    local.args(["atoms"]);
+    assert_eq!(
+        run_json(local),
+        serde_json::json!([{
+            "id": "acme/atlas/K-000001",
+            "title": "Local inventory",
+            "type": "note",
+            "confidence": "high",
+            "tags": [],
+        }])
+    );
+
+    let mut org = atlas(temp.path());
+    org.args(["atoms", "--scope", "acme"]);
+    let listed = run_json(org);
+    let ids: Vec<&str> = listed
+        .as_array()
+        .expect("listing should be an array")
+        .iter()
+        .map(|a| a["id"].as_str().expect("id should be a string"))
+        .collect();
+    assert_eq!(ids, vec!["acme/atlas/K-000001", "acme/other/K-000001"]);
+}
+
+#[test]
+fn create_links_the_new_atom_to_every_named_peer() {
+    let temp = TempDir::new("create-with-links");
+    let local = note(temp.path(), "atlas", "Existing local");
+    let sibling = note(temp.path(), "backend", "Existing sibling");
+
+    let mut create = atlas_in(temp.path(), "atlas");
+    create.args([
         "create",
         "--title",
-        "Source",
+        "Recorded with its edges",
+        "--type",
+        "decision",
+        "--confidence",
+        "high",
+        "--summary",
+        "Linked as it was written",
+        "--link",
+        &local,
+        "--link",
+        "backend/K-000001",
+    ]);
+    let created = run_json(create);
+    assert_eq!(
+        created["links"],
+        serde_json::json!([local.clone(), sibling.clone()])
+    );
+
+    let new_id = created["id"].as_str().expect("id should be a string");
+    assert_eq!(
+        links_of(temp.path(), new_id),
+        serde_json::json!(["K-000001", "backend/K-000001"])
+    );
+    assert_eq!(
+        links_of(temp.path(), &local),
+        serde_json::json!(["K-000002"])
+    );
+    assert_eq!(
+        links_of(temp.path(), &sibling),
+        serde_json::json!(["atlas/K-000002"])
+    );
+}
+
+#[test]
+fn update_reports_the_edges_the_rewritten_atom_still_holds() {
+    let temp = TempDir::new("update-echoes-edges");
+    let subject = note(temp.path(), "atlas", "Subject");
+    let local = note(temp.path(), "atlas", "Local peer");
+    let sibling = note(temp.path(), "backend", "Sibling peer");
+
+    for peer in [&local, &sibling] {
+        let mut link = atlas(temp.path());
+        link.args(["link", &subject, peer]);
+        run_json(link);
+    }
+
+    let mut update = atlas(temp.path());
+    update.args(["update", &subject, "--summary", "Means something else now"]);
+    let updated = run_json(update);
+    assert_eq!(updated["created"], false);
+    assert_eq!(
+        updated["links"],
+        serde_json::json!([local.clone(), sibling.clone()]),
+        "an update must surface the edges that may no longer fit the new text"
+    );
+
+    let mut unlinked = atlas(temp.path());
+    unlinked.args(["unlink", &subject, &sibling]);
+    run_json(unlinked);
+
+    let mut again = atlas(temp.path());
+    again.args(["update", &subject, "--summary", "Narrower still"]);
+    assert_eq!(run_json(again)["links"], serde_json::json!([local]));
+}
+
+#[test]
+fn update_of_an_unlinked_atom_reports_no_edges() {
+    let temp = TempDir::new("update-no-edges");
+    let subject = note(temp.path(), "atlas", "Subject");
+
+    let mut update = atlas(temp.path());
+    update.args(["update", &subject, "--summary", "Still standing alone"]);
+    assert!(run_json(update).get("links").is_none());
+}
+
+#[test]
+fn create_writes_nothing_when_a_named_peer_does_not_exist() {
+    let temp = TempDir::new("create-bad-link");
+    note(temp.path(), "atlas", "Existing local");
+
+    let mut create = atlas_in(temp.path(), "atlas");
+    create.args([
+        "create",
+        "--title",
+        "Should not survive",
         "--type",
         "note",
         "--confidence",
         "high",
         "--summary",
-        "Source summary",
+        "Names a peer that is not there",
+        "--link",
+        "K-000404",
     ]);
-    let source = run_json(source);
+    let output = create.output().expect("command should run");
+    assert!(!output.status.success());
 
-    let mut target = atlas(temp.path());
-    target.args([
-        "create",
-        "--title",
-        "Target",
-        "--type",
-        "note",
-        "--confidence",
-        "high",
-        "--summary",
-        "Target summary",
-    ]);
-    let target = run_json(target);
+    let mut list = atlas(temp.path());
+    list.args(["atoms"]);
+    let listed = run_json(list);
+    assert_eq!(
+        listed.as_array().expect("listing should be an array").len(),
+        1,
+        "the failed create must not leave an atom behind"
+    );
+}
 
-    let source_id = source["id"].as_str().expect("source ID should be a string");
-    let target_id = target["id"].as_str().expect("target ID should be a string");
+#[test]
+fn link_writes_both_halves_within_one_project() {
+    let temp = TempDir::new("link-same-project");
+    let source = note(temp.path(), "atlas", "Source");
+    let target = note(temp.path(), "atlas", "Target");
+
     let mut link = atlas(temp.path());
-    link.args(["link", source_id, target_id]);
+    link.args(["link", &source, &target]);
+    assert_eq!(run_json(link)["created"], true);
+
+    assert_eq!(
+        links_of(temp.path(), &source),
+        serde_json::json!(["K-000002"])
+    );
+    assert_eq!(
+        links_of(temp.path(), &target),
+        serde_json::json!(["K-000001"])
+    );
+}
+
+#[test]
+fn link_writes_both_halves_across_projects() {
+    let temp = TempDir::new("link-cross-project");
+    let source = note(temp.path(), "atlas", "Source");
+    let target = note(temp.path(), "backend", "Target");
+
+    let mut link = atlas(temp.path());
+    link.args(["link", &source, &target]);
     run_json(link);
 
-    let mut delete = atlas(temp.path());
-    delete.args(["delete", target_id]);
-    let output = delete.output().expect("command should run");
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("inbound links"));
+    assert_eq!(
+        links_of(temp.path(), &source),
+        serde_json::json!(["backend/K-000001"])
+    );
+    assert_eq!(
+        links_of(temp.path(), &target),
+        serde_json::json!(["atlas/K-000001"])
+    );
+}
 
-    let mut force_delete = atlas(temp.path());
-    force_delete.args(["delete", "--force", target_id]);
-    let result = run_json(force_delete);
+#[test]
+fn link_is_idempotent_and_restores_a_missing_half() {
+    let temp = TempDir::new("link-idempotent");
+    let source = note(temp.path(), "atlas", "Source");
+    let target = note(temp.path(), "atlas", "Target");
+
+    let mut first = atlas(temp.path());
+    first.args(["link", &source, &target]);
+    run_json(first);
+
+    let mut again = atlas(temp.path());
+    again.args(["link", &source, &target]);
+    assert_eq!(run_json(again)["created"], false);
+    assert_eq!(
+        links_of(temp.path(), &source),
+        serde_json::json!(["K-000002"])
+    );
+
+    drop_links(temp.path(), &target);
+    let mut heal = atlas(temp.path());
+    heal.args(["link", &source, &target]);
+    assert_eq!(run_json(heal)["created"], true);
+    assert_eq!(
+        links_of(temp.path(), &target),
+        serde_json::json!(["K-000001"])
+    );
+}
+
+#[test]
+fn unlink_clears_both_halves() {
+    let temp = TempDir::new("unlink-both-halves");
+    let source = note(temp.path(), "atlas", "Source");
+    let target = note(temp.path(), "backend", "Target");
+
+    let mut link = atlas(temp.path());
+    link.args(["link", &source, &target]);
+    run_json(link);
+
+    let mut unlink = atlas(temp.path());
+    unlink.args(["unlink", &source, &target]);
+    assert_eq!(run_json(unlink)["removed"], true);
+
+    assert_eq!(links_of(temp.path(), &source), serde_json::json!([]));
+    assert_eq!(links_of(temp.path(), &target), serde_json::json!([]));
+}
+
+#[test]
+fn link_rejects_an_atom_linked_to_itself() {
+    let temp = TempDir::new("link-self");
+    let source = note(temp.path(), "atlas", "Source");
+
+    let mut link = atlas(temp.path());
+    link.args(["link", &source, &source]);
+    let output = link.output().expect("command should run");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("itself"));
+}
+
+#[test]
+fn delete_detaches_every_atom_that_referenced_it() {
+    let temp = TempDir::new("delete-detaches-peers");
+    let neighbour = note(temp.path(), "atlas", "Neighbour");
+    let elsewhere = note(temp.path(), "backend", "Elsewhere");
+    let doomed = note(temp.path(), "atlas", "Doomed");
+
+    for peer in [&neighbour, &elsewhere] {
+        let mut link = atlas(temp.path());
+        link.args(["link", peer, &doomed]);
+        run_json(link);
+    }
+
+    let mut delete = atlas(temp.path());
+    delete.args(["delete", &doomed]);
+    let result = run_json(delete);
     assert_eq!(result["deleted"], true);
+    assert_eq!(
+        result["detached"],
+        serde_json::json!([neighbour.clone(), elsewhere.clone()])
+    );
+
+    assert_eq!(links_of(temp.path(), &neighbour), serde_json::json!([]));
+    assert_eq!(links_of(temp.path(), &elsewhere), serde_json::json!([]));
 }

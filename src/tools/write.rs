@@ -2,13 +2,14 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::config::get_project_path;
-use crate::context::{detect_context_full, require_explicit_write_context};
+use crate::context::{detect_context_full, require_explicit_write_context, ProjectContext};
 use crate::error::AtlasError;
 use crate::locking::ProjectLock;
 use crate::models::{Atom, AtomType, Confidence, IndexEntry};
 use crate::storage::{ensure_project_exists, load_index, read_atom, save_index, write_atom};
 
-use super::reference::{format_atom_reference, parse_atom_reference};
+use super::link::{link, LinkRequest};
+use super::reference::{format_atom_reference, parse_atom_reference, AtomRef};
 
 /// Check if a string looks like a stringified JSON array and return parsed version if so.
 fn detect_stringified_array(value: &str) -> Option<Vec<String>> {
@@ -143,6 +144,11 @@ pub struct AtomWriteResult {
     /// Full atom reference: "org/project/K-000001"
     pub id: String,
     pub created: bool,
+
+    /// Atoms this one references after the write. Reported on update as well as
+    /// create, because rewriting what an atom says can outdate why it was linked.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<String>,
 }
 
 /// Create a new atom.
@@ -189,7 +195,18 @@ pub fn update_atom(id: String, req: AtomUpdateRequest) -> Result<AtomWriteResult
     Ok(AtomWriteResult {
         id: format_atom_reference(&atom_ref.org, &atom_ref.project, &atom.id),
         created: false,
+        links: edge_references(&atom_ref, &atom.links),
     })
+}
+
+/// Edges as unambiguous full references, so a caller reviewing them need not resolve a
+/// bare id against the atom's own project.
+fn edge_references(atom_ref: &AtomRef, links: &[String]) -> Vec<String> {
+    let owner = ProjectContext::new(atom_ref.org.clone(), atom_ref.project.clone());
+    links
+        .iter()
+        .map(|link| parse_atom_reference(link, &owner).to_full_path())
+        .collect()
 }
 
 fn apply_vec_update(target: &mut Vec<String>, replacement: Option<Vec<String>>, clear: bool) {
@@ -210,51 +227,68 @@ fn write_atom_request(req: AtomWriteRequest) -> Result<AtomWriteResult, AtlasErr
     let target_org = ctx.org.clone();
     let target_project = ctx.project.clone();
 
-    // Validate links before acquiring lock
-    if let Some(ref links) = req.links {
-        validate_links(&target_org, links, &ctx)?;
+    // Resolve every peer before the atom exists, so a bad reference fails the
+    // whole create rather than leaving a new atom holding some of its edges.
+    let peers = resolve_links(&target_org, req.links.as_deref().unwrap_or_default(), &ctx)?;
+
+    let atom_id = {
+        let _lock = ProjectLock::acquire(&target_org, &target_project)?;
+
+        // Ensure project exists
+        ensure_project_exists(&target_org, &target_project)?;
+
+        let mut index = load_index(&target_org, &target_project)?;
+
+        let id = index.generate_id();
+        let mut atom = Atom::new(id, req.title, req.atom_type, req.confidence, req.summary);
+        atom.details = req.details;
+        atom.pitfalls = req.pitfalls.unwrap_or_default();
+        atom.tags = req.tags.unwrap_or_default();
+        atom.sources = req.sources.unwrap_or_default();
+
+        // Write atom
+        write_atom(&target_org, &target_project, &atom)?;
+
+        // Update index
+        index.insert_or_replace_entry(IndexEntry::from_atom(&atom));
+        save_index(&target_org, &target_project, &index)?;
+
+        atom.id
+    };
+
+    // Edges go through link so each one lands on both atoms; the project lock above
+    // is released by now because linking takes the locks it needs itself.
+    let id = format_atom_reference(&target_org, &target_project, &atom_id);
+    let mut links = Vec::new();
+    for peer in peers {
+        let peer = peer.to_full_path();
+        link(LinkRequest {
+            source: id.clone(),
+            target: peer.clone(),
+        })?;
+        links.push(peer);
     }
 
-    let _lock = ProjectLock::acquire(&target_org, &target_project)?;
-
-    // Ensure project exists
-    ensure_project_exists(&target_org, &target_project)?;
-
-    let mut index = load_index(&target_org, &target_project)?;
-
-    let id = index.generate_id();
-    let mut atom = Atom::new(id, req.title, req.atom_type, req.confidence, req.summary);
-    atom.details = req.details;
-    atom.pitfalls = req.pitfalls.unwrap_or_default();
-    atom.tags = req.tags.unwrap_or_default();
-    atom.sources = req.sources.unwrap_or_default();
-    atom.links = req.links.unwrap_or_default();
-    let created = true;
-
-    // Write atom
-    write_atom(&target_org, &target_project, &atom)?;
-
-    // Update index
-    index.insert_or_replace_entry(IndexEntry::from_atom(&atom));
-    save_index(&target_org, &target_project, &index)?;
-
     Ok(AtomWriteResult {
-        id: format_atom_reference(&target_org, &target_project, &atom.id),
-        created,
+        id,
+        created: true,
+        links,
     })
 }
 
-/// Validate links - reject cross-org links, allow cross-project within same org.
+/// Resolve requested links to atoms that exist in the same org.
 ///
 /// Accepts:
 /// - "K-000001" (bare id, same project)
 /// - "project/K-000001" (cross-project within same org)
 /// - "org/project/K-000001" (full path, org must match target_org)
-fn validate_links(
+fn resolve_links(
     target_org: &str,
     links: &[String],
-    ctx: &crate::context::ProjectContext,
-) -> Result<(), AtlasError> {
+    ctx: &ProjectContext,
+) -> Result<Vec<AtomRef>, AtlasError> {
+    let mut resolved: Vec<AtomRef> = Vec::new();
+
     for link in links {
         let atom_ref = parse_atom_reference(link, ctx);
 
@@ -274,8 +308,15 @@ fn validate_links(
                 atom_ref.project, atom_ref.org
             )));
         }
+
+        read_atom(&atom_ref.org, &atom_ref.project, &atom_ref.id)?;
+
+        if !resolved.contains(&atom_ref) {
+            resolved.push(atom_ref);
+        }
     }
-    Ok(())
+
+    Ok(resolved)
 }
 
 #[cfg(test)]

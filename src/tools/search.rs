@@ -97,8 +97,13 @@ pub struct SearchResponse {
 pub fn search(req: SearchRequest) -> Result<SearchResponse, AtlasError> {
     let ctx = detect_context_full()?.context;
 
-    // Parse scope to determine org and optional project filter
-    let (search_org, scope_project) = parse_scope(req.scope.as_deref(), &ctx)?;
+    // Parse scope to determine org and optional project filter. With no scope the
+    // whole org is in play: knowledge that explains this repo often lives in a
+    // sibling one, and the cross-project penalty below keeps local hits on top.
+    let (search_org, scope_project) = match req.scope.as_deref() {
+        None => (ctx.org.clone(), None),
+        Some(scope) => parse_scope(Some(scope), &ctx)?,
+    };
 
     let page = req.page.unwrap_or(1).max(1); // Ensure minimum page 1
     let page_size = req.page_size.unwrap_or(20);

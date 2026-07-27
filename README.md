@@ -9,7 +9,7 @@ CLI knowledge and memory manager for coding agents. Atlas stores small, searchab
 - **Automatic context detection** - uses `--org/--project`, repo-local `.atlas/`, git remote, then fallback
 - **Hierarchical storage** - atoms live in `~/.atlas/orgs/{org}/{project}/atoms/`
 - **Version-controlled storage** - store atoms in a repo-local `.atlas/` directory with `enable-local`
-- **Cross-project links** - reference atoms across projects within the same org
+- **Mutual cross-project links** - linked atoms reference each other, across projects within the same org
 - **Simple atom model** - 4 types: note, gotcha, recipe, decision
 
 ## Installation
@@ -32,20 +32,21 @@ The binary is named `atlas`.
 # Verify context
 atlas context
 
-# Search the current project's memory
+# Search the org's memory, current project ranked first
 atlas search "error handling" --page-size 10
 
 # Fetch a full atom
 atlas get sephriot/atlas/K-000001
 
-# Create a short atom
+# Create a short atom, linked to what it relates to
 atlas create \
   --title "API clients require explicit timeouts" \
   --type gotcha \
   --confidence high \
   --summary "Network clients should set explicit timeouts; defaults may hang." \
   --tag api --tag timeout \
-  --source src/api/client.rs
+  --source src/api/client.rs \
+  --link K-000042 --link backend/K-000031
 ```
 
 ## Pipe Workflows
@@ -86,9 +87,9 @@ cat notes.md | atlas create \
 | `atoms` / `list` | List atoms with optional filters |
 | `create` | Create a new atom |
 | `update` | Update an existing atom by ID |
-| `delete` | Delete an atom |
-| `link` | Create a directed link between atoms |
-| `unlink` | Remove a directed link |
+| `delete` | Delete an atom and unlink it from everything that referenced it |
+| `link` | Link two atoms so each one references the other |
+| `unlink` | Remove the references two atoms hold to each other |
 | `projects` | List all projects |
 | `context` | Show detected org/project context |
 | `instructions` | Print agent instructions for using Atlas |
@@ -100,8 +101,17 @@ atoms by title because titles are mutable metadata, not stable identity.
 Updates are patches: fields omitted from the command stay unchanged. Use
 `--clear details`, `--clear tags`, `--clear sources`, or `--clear pitfalls` to
 remove stored data. Use `atlas link` and `atlas unlink` to change atom links.
-Delete refuses atoms with inbound links
-unless `--force` is explicit.
+
+Links are mutual. `atlas link` writes the reference on both atoms, so either one
+leads to the other; `atlas unlink` removes both. Re-running `link` on a pair that
+only references each other one way restores the missing half. `delete` unlinks
+the atom from every atom that referenced it and reports which ones it detached.
+
+`create --link <atom-id>` records an atom together with its edges, repeatable, and
+fails without writing anything if a named atom does not exist. `update` takes no
+link fields: it patches one atom, and an edge belongs to two. It does report the
+atom's edges back, because rewriting what an atom says can outdate why it was
+linked — review that list and `atlas unlink` what no longer holds.
 
 Global options:
 
@@ -158,12 +168,16 @@ deleting, linking, or unlinking atoms:
 atlas --org my-company --project my-service context
 ```
 
-Search uses the current project by default. Use an organization scope for
-cross-project discovery:
+Search covers the whole org by default and ranks the current project first, so a
+sibling repository's knowledge is reachable without asking for it. Narrow to one
+project when the cross-project results are noise:
 
 ```bash
-atlas search "error handling" --scope my-company
+atlas search "error handling" --scope my-company/my-service
 ```
+
+`atlas atoms` is the opposite: an inventory of the current project unless a scope
+names another project, or an org whose projects should all be listed.
 
 ## Storage
 

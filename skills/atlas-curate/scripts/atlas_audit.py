@@ -5,6 +5,10 @@ Read-only. Resolves every atom's sources against the filesystem and every link
 against the atoms that actually exist, then prints what a curation pass has to
 decide about. It classifies nothing as useless — that judgement stays with the
 reader.
+
+It reads the other projects in the same org too. Atlas writes both halves of a
+link now, so an edge only one atom holds predates that and is invisible from the
+side that is missing it.
 """
 
 import argparse
@@ -38,6 +42,40 @@ def current_scope():
     return "%s/%s" % (org, project)
 
 
+def scope_ids(scope):
+    # Per project rather than per org, so no single listing can reach the
+    # result limit and drop atoms without saying so.
+    if "/" not in scope:
+        raise SystemExit("scope must be org/project, got %r" % scope)
+    return [line.strip() for line in atlas("atoms", "--scope", scope, "--ids").splitlines() if line.strip()]
+
+
+def load_atoms(ids):
+    """Return ({id: atom}, [unreadable ids]). One bad ID fails a whole batch."""
+    if not ids:
+        return {}, []
+    proc = subprocess.run(("atlas", "get", "-", "--format", "json"),
+                          input="\n".join(ids), capture_output=True, text=True)
+    if proc.returncode == 0:
+        return dict(zip(ids, json.loads(proc.stdout))), []
+    atoms, missing = {}, []
+    for atom_id in ids:
+        one = subprocess.run(("atlas", "get", atom_id, "--format", "json"),
+                             capture_output=True, text=True)
+        if one.returncode == 0:
+            atoms[atom_id] = json.loads(one.stdout)
+        else:
+            missing.append(atom_id)
+    return atoms, missing
+
+
+def sibling_scopes(org, exclude):
+    projects = json.loads(atlas("projects", "--format", "json"))
+    return sorted("%s/%s" % (p["org"], p["project"]) for p in projects
+                  if p["org"] == org and p["atom_count"] > 0
+                  and "%s/%s" % (p["org"], p["project"]) != exclude)
+
+
 def classify_source(source, root):
     """Return (kind, resolved_path). Only 'file' entries are checked on disk."""
     if source.startswith(("http://", "https://", "git@")):
@@ -50,9 +88,16 @@ def classify_source(source, root):
 
 
 def qualify(link, scope):
+    """Resolve a stored link against the project of the atom holding it."""
     if BARE.match(link):
         return "%s/%s" % (scope, link)
-    return link
+    if FQ.match(link):
+        return link
+    return "%s/%s" % (scope.split("/")[0], link)
+
+
+def project_of(atom_id):
+    return atom_id.rsplit("/", 1)[0]
 
 
 def title_tokens(title):
@@ -69,21 +114,41 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scope", help="org/project to audit (default: atlas context)")
     parser.add_argument("--root", default=".", help="repo root that sources resolve against")
+    parser.add_argument("--skip-org-scan", action="store_true",
+                        help="audit this project alone; edges into sibling projects go unchecked")
     parser.add_argument("--format", choices=("text", "json"), default="text")
     args = parser.parse_args()
 
     scope = args.scope or current_scope()
     root = os.path.abspath(args.root)
+    org = scope.split("/")[0]
 
-    ids = [line.strip() for line in atlas("atoms", "--scope", scope, "--ids").splitlines() if line.strip()]
+    ids = scope_ids(scope)
     if not ids:
         raise SystemExit("no atoms in scope %s" % scope)
+    atoms, index_orphans = load_atoms(ids)
+    if not atoms:
+        raise SystemExit("no readable atoms in scope %s" % scope)
 
-    atoms = {}
-    for atom_id in ids:
-        atoms[atom_id] = json.loads(atlas("get", atom_id, "--format", "json"))
+    siblings, scanned = {}, []
+    if not args.skip_org_scan:
+        for other in sibling_scopes(org, scope):
+            found, orphaned = load_atoms(scope_ids(other))
+            siblings.update(found)
+            index_orphans += orphaned
+            scanned.append((other, len(found)))
 
-    known = set(ids)
+    everything = dict(atoms)
+    everything.update(siblings)
+    known = set(everything)
+
+    outbound = {atom_id: [qualify(link, project_of(atom_id)) for link in atom.get("links", [])]
+                for atom_id, atom in everything.items()}
+    inbound = {}
+    for src, targets in outbound.items():
+        for target in targets:
+            inbound.setdefault(target, []).append(src)
+
     report = []
     for atom_id, atom in atoms.items():
         dead, external, freeform = [], [], []
@@ -101,11 +166,23 @@ def main():
             target = qualify(link, scope)
             if target in known:
                 continue
-            # Out-of-scope target: only atlas can say whether it exists.
+            # Outside the scanned org, only atlas can say whether it exists.
             probe = subprocess.run(("atlas", "get", target, "--format", "json"),
                                    capture_output=True, text=True)
             if probe.returncode != 0:
-                dangling.append(link)
+                dangling.append(target)
+
+        edges_out = sorted(t for t in outbound[atom_id] if t not in dangling)
+        edges_in = sorted(inbound.get(atom_id, []))
+        asymmetric = []
+        for peer in edges_out:
+            if peer in known and atom_id not in outbound.get(peer, []):
+                asymmetric.append({"peer": peer, "held_by": "this atom only",
+                                   "cross_project": project_of(peer) != scope})
+        for peer in edges_in:
+            if peer not in edges_out:
+                asymmetric.append({"peer": peer, "held_by": "the peer only",
+                                   "cross_project": project_of(peer) != scope})
 
         total = len([s for s in atom.get("sources", []) if classify_source(s, root)[0] == "file"])
         report.append({
@@ -118,10 +195,14 @@ def main():
             "external_sources": external,
             "freeform_sources": freeform,
             "dangling_links": dangling,
+            "inbound_links": edges_in,
+            "outbound_links": edges_out,
+            "asymmetric_links": asymmetric,
             "sourceless": total == 0,
+            "isolated": not edges_in and not edges_out,
         })
 
-    pairs = []
+    pairs, cross_pairs = [], []
     items = sorted(atoms.items())
     for i, (id_a, a) in enumerate(items):
         for id_b, b in items[i + 1:]:
@@ -130,14 +211,35 @@ def main():
             if len(shared) >= 3 and overlap >= 0.4:
                 pairs.append({"a": id_a, "b": id_b, "shared_tags": sorted(shared),
                               "title_overlap": round(overlap, 2)})
+        for id_b, b in sorted(siblings.items()):
+            if id_b in outbound[id_a] or id_a in outbound.get(id_b, []):
+                continue
+            shared = set(a.get("tags", [])) & set(b.get("tags", []))
+            overlap = jaccard(title_tokens(a["title"]), title_tokens(b["title"]))
+            if len(shared) >= 3 or (len(shared) >= 2 and overlap >= 0.3):
+                cross_pairs.append({"a": id_a, "b": id_b, "shared_tags": sorted(shared),
+                                    "title_overlap": round(overlap, 2)})
 
     if args.format == "json":
-        json.dump({"scope": scope, "root": root, "atoms": report, "duplicate_candidates": pairs},
+        json.dump({"scope": scope, "root": root, "org_scanned": scanned,
+                   "index_orphans": index_orphans, "atoms": report,
+                   "duplicate_candidates": pairs,
+                   "cross_project_link_candidates": cross_pairs},
                   sys.stdout, indent=2)
         sys.stdout.write("\n")
         return
 
-    print("scope %s, %d atoms, sources resolved against %s\n" % (scope, len(report), root))
+    print("scope %s, %d atoms, sources resolved against %s" % (scope, len(report), root))
+    if args.skip_org_scan:
+        print("org scan skipped: edges into sibling projects unchecked\n")
+    else:
+        print("org %s: %d sibling atoms across %d projects\n" % (org, len(siblings), len(scanned)))
+
+    if index_orphans:
+        print("== listed by atlas atoms but unreadable: %d ==" % len(index_orphans))
+        for atom_id in index_orphans:
+            print(atom_id)
+        print()
 
     flagged = [r for r in report if r["dead_sources"] or r["dangling_links"]]
     print("== atoms with mechanical evidence of drift: %d ==" % len(flagged))
@@ -154,10 +256,31 @@ def main():
     for r in sourceless:
         print("%s  %s  (updated %s)" % (r["id"], r["title"], r["updated_at"]))
 
+    lopsided = [r for r in report if r["asymmetric_links"]]
+    total_edges = sum(len(r["asymmetric_links"]) for r in lopsided)
+    print("\n== edges only one atom holds: %d across %d atoms ==" % (total_edges, len(lopsided)))
+    for r in lopsided:
+        print("%s  %s" % (r["id"], r["title"]))
+        for edge in r["asymmetric_links"]:
+            print("    %s  held by %s%s" % (edge["peer"], edge["held_by"],
+                                            "  [cross-project]" if edge["cross_project"] else ""))
+
+    isolated = [r for r in report if r["isolated"]]
+    print("\n== atoms with no edges at all: %d ==" % len(isolated))
+    for r in isolated:
+        print("%s  %s" % (r["id"], r["title"]))
+
     print("\n== duplicate candidates: %d ==" % len(pairs))
     for p in pairs:
         print("%s <-> %s  tags %s  title overlap %s"
               % (p["a"], p["b"], ",".join(p["shared_tags"]), p["title_overlap"]))
+
+    print("\n== unlinked atoms that share ground with a sibling project: %d ==" % len(cross_pairs))
+    for p in cross_pairs:
+        print("%s <-> %s  tags %s  title overlap %s"
+              % (p["a"], p["b"], ",".join(p["shared_tags"]), p["title_overlap"]))
+
+    print("\nfull edge lists per atom: rerun with --format json")
 
 
 if __name__ == "__main__":

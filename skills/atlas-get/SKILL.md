@@ -25,20 +25,21 @@ This prevents searching/recording in the wrong project (e.g., `global/tmp`).
 ## Workflow
 
 1. **Extract keywords** from the task/question
-2. **Search the current project** with those keywords using `atlas search <query>`; use `--scope <org>` only when cross-project knowledge is needed
-3. **Read full atoms** with `atlas get <ID>` for each relevant hit
-4. **Cite atoms** in your response using `[K-XXXXXX]` format
+2. **Search** with those keywords using `atlas search <query>`. This covers the whole org and ranks the current project first, so a sibling repository's hits arrive below the local ones rather than not at all. Narrow with `--scope <org>/<project>` when they are noise
+3. **Read full atoms** with `atlas get <ID>` for each relevant hit, local or not — a hit from another project is a real answer, and its project is part of the citation
+4. **Follow their links** — edges are mutual, so a relevant atom names its neighbours whichever side recorded them, and a `<project>/K-NNNNNN` link leads into a sibling repository
+5. **Cite atoms** in your response using `[K-XXXXXX]` format
 
 ## CLI Commands
 
-**Broad discovery:**
+**Broad discovery**, across the org with local hits first:
 ```bash
 atlas search "error handling" --page-size 10
 ```
 
-**Cross-project discovery:**
+**Narrowed to one project:**
 ```bash
-atlas search "error handling" --scope acme --page-size 10
+atlas search "error handling" --scope acme/backend --page-size 10
 ```
 
 **Type-specific:**
@@ -58,9 +59,10 @@ atlas get K-000012
 
 `atlas get --format json` omits a field entirely when it is empty, so an absent `links` key means the atom has none — not that the read failed.
 
-**List the store instead of searching it**, for an audit or to see what exists:
+**List the store instead of searching it**, for an audit or to see what exists. Unlike search, a listing stays local unless a scope says otherwise:
 ```bash
 atlas atoms --scope <org>/<project> --type gotcha
+atlas atoms --scope <org>            # every project in the org
 atlas atoms --ids
 ```
 

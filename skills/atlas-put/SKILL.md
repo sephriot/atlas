@@ -52,11 +52,48 @@ Recording to the wrong project makes knowledge unfindable.
    - use `--details -` to read details from stdin, preserving markdown and avoiding shell quoting problems
    - `--tag`: Keywords for searchability (repeatable)
    - `--source`: Relevant file paths (repeatable)
-4. **Link related atoms** with `atlas link <SOURCE> <TARGET>` if applicable
+   - `--link`: Atoms this one relates to (repeatable), per Linking below
 
 **`atlas update` is a patch.** Omitted fields stay unchanged. Use
 `--clear details`, `--clear tags`, `--clear sources`, or `--clear pitfalls` to
-remove stored data intentionally. Manage links with `atlas link` and `atlas unlink`.
+remove stored data intentionally. Update takes no link fields — it patches one atom,
+and an edge belongs to two. Change edges on an existing atom with `atlas link` and
+`atlas unlink`.
+
+**An update reports the atom's edges back, so read them.** Changing what an atom says
+can outdate why it was linked: an edge that pointed at the reason for the old claim may
+have no bearing on the new one. Every update prints the atoms this one still references —
+that list is a question, not a receipt. Keep the edges that still explain something and
+`atlas unlink` the rest, in the same pass as the rewrite rather than leaving it for a
+future audit.
+
+## Linking
+
+Pass `--link` on `create` and the atom arrives with its edges. That is the point:
+recording and linking as one command, because linking as a second command is the step
+that gets skipped. It is repeatable, and it fails without writing anything when a named
+atom does not exist, so a rejected create is safe to retry.
+
+An edge is mutual whichever command writes it — `--link`, or `atlas link` on two atoms
+that already exist. One call, followable from either end, no direction to get right.
+
+Give every new atom at least one edge when one exists: the gotcha the decision
+avoids, the recipe this fix generalizes, the atom this one supersedes. An atom with
+no edges is reachable only by guessing its keywords.
+
+**Reach into a sibling project when the work did.** An edge across projects is the
+only cheap path from a project-scoped search into another repository's knowledge, and
+links stay inside one org. Search `--scope <org>` before recording when any of these
+holds:
+
+- The change was driven by an API, schema, or convention another repository owns
+- The cause sits in one repository and the symptom in another
+- One fix, migration, or incident touched more than one repository
+
+Name a cross-project target by its project: `--link backend/K-000031`, or
+`atlas link K-000012 backend/K-000031`. A bare ID always means the current project.
+
+Prefer a few load-bearing edges. Linking everything that shares a tag is traversal noise.
 
 ## Stdin and Pipe Preference
 
@@ -111,7 +148,7 @@ printf '%s\n' "External API calls must use exponential backoff after 429s." \
       --source src/api/client.rs
 ```
 
-**Create details from stdin:**
+**Create details from stdin, with edges:**
 ```bash
 cat notes.md | atlas create \
   --title "API rate limits require exponential backoff" \
@@ -119,7 +156,8 @@ cat notes.md | atlas create \
   --confidence high \
   --summary "The external API enforces strict rate limits..." \
   --details - \
-  --tag api --tag rate-limiting
+  --tag api --tag rate-limiting \
+  --link K-000012 --link backend/K-000031
 ```
 
 **Capture command output as details:**
@@ -139,12 +177,13 @@ cat notes.md | atlas update K-000012 \
   --details -
 ```
 
-**Link related atoms:**
+**Link two atoms to each other:**
 ```bash
 atlas link K-000012 K-000045
+atlas link K-000012 backend/K-000031
 ```
 
-**Remove one edge:**
+**Remove an edge from both sides:**
 ```bash
 atlas unlink K-000012 K-000045
 ```
@@ -154,7 +193,7 @@ atlas unlink K-000012 K-000045
 atlas delete K-000012
 ```
 
-Deletion refuses atoms with inbound edges unless `--force` is explicit. Find what points at the atom first and repoint or remove those edges, matching on the fully qualified `<org>/<project>/<id>` — another project's `K-000012` is a different atom with the same bare ID. Where the store lives inside a git repository, commit it before deleting so the removal stays recoverable.
+Deletion also unlinks the atom from everything that referenced it and reports those atoms as `detached`, so no half-edges survive it. Read that list: an atom that several others leaned on is usually worth rewriting instead of removing. Where the store lives inside a git repository, commit it before deleting so the removal stays recoverable.
 
 ## Quality Criteria
 

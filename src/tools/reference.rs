@@ -20,7 +20,6 @@ impl AtomRef {
     }
 
     /// Format as full path: "org/project/id"
-    #[allow(dead_code)]
     pub fn to_full_path(&self) -> String {
         format!("{}/{}/{}", self.org, self.project, self.id)
     }

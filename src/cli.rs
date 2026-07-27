@@ -118,17 +118,13 @@ pub enum Commands {
         content: AtomUpdateArgs,
     },
 
-    /// Delete an atom
+    /// Delete an atom, unlinking it from every atom that references it
     Delete {
         /// Atom ID (org/project/id, project/id, or bare id)
         id: String,
-
-        /// Delete even when other atoms link to this one
-        #[arg(long)]
-        force: bool,
     },
 
-    /// Create a directed link between atoms
+    /// Link two atoms so each one references the other
     Link {
         /// Source atom ID
         source: String,
@@ -137,7 +133,7 @@ pub enum Commands {
         target: String,
     },
 
-    /// Remove a directed link between atoms
+    /// Remove the references two atoms hold to each other
     Unlink {
         /// Source atom ID
         source: String,
@@ -200,6 +196,10 @@ pub struct AtomWriteArgs {
     /// References (can specify multiple)
     #[arg(long)]
     source: Vec<String>,
+
+    /// Atoms to link this one to, mutually (can specify multiple)
+    #[arg(long)]
+    link: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -316,8 +316,8 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
             let result = update_atom(id, req)?;
             print_output(&result, format)?;
         }
-        Commands::Delete { id, force } => {
-            let result = delete_atom(DeleteAtomRequest { id, force })?;
+        Commands::Delete { id } => {
+            let result = delete_atom(DeleteAtomRequest { id })?;
             print_output(&result, format)?;
         }
         Commands::Link { source, target } => {
@@ -458,7 +458,11 @@ fn atom_write_request_from_args(args: AtomWriteArgs) -> Result<AtomWriteRequest,
         } else {
             Some(args.source)
         },
-        links: None,
+        links: if args.link.is_empty() {
+            None
+        } else {
+            Some(args.link)
+        },
     })
 }
 

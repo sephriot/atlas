@@ -12,6 +12,7 @@ use crate::locking::ProjectLock;
 use crate::models::{Atom, AtomType, Confidence, IndexEntry};
 use crate::storage::{delete_atom_file, load_index, read_atom as storage_read_atom, save_index};
 
+use super::link::{unlink, LinkRequest};
 use super::reference::{format_atom_reference, parse_atom_reference, parse_scope, AtomRef};
 
 // ============================================================================
@@ -136,12 +137,15 @@ pub fn list_atoms(req: ListAtomsRequest) -> Result<Vec<ListAtomResult>, AtlasErr
 
     let limit = req.limit.unwrap_or(50);
 
-    // Determine which projects to list from
-    let projects_to_list: Vec<String> = if let Some(ref proj) = scope_project {
-        vec![proj.clone()]
-    } else {
-        // Default: list from current project only (unlike search which searches all)
-        vec![ctx.project.clone()]
+    // A listing is an inventory, so it stays local unless a scope asks otherwise.
+    let projects_to_list: Vec<String> = match (req.scope.as_deref(), scope_project) {
+        (None, _) => vec![ctx.project.clone()],
+        (Some(_), Some(proj)) => vec![proj],
+        (Some(_), None) => {
+            let mut projects = list_org_projects(&list_org)?;
+            projects.sort();
+            projects
+        }
     };
 
     let mut results: Vec<ListAtomResult> = Vec::new();
@@ -199,28 +203,30 @@ pub fn list_atoms(req: ListAtomsRequest) -> Result<Vec<ListAtomResult>, AtlasErr
 pub struct DeleteAtomRequest {
     /// Atom ID: "org/project/K-000001", "project/K-000001", or "K-000001"
     pub id: String,
-    pub force: bool,
 }
 
 /// Delete result.
 #[derive(Debug, Clone, Serialize)]
 pub struct DeleteResult {
     pub deleted: bool,
+
+    /// Atoms that referenced this one and were unlinked from it
+    pub detached: Vec<String>,
 }
 
-/// Delete an atom.
+/// Delete an atom, unlinking it from every atom that references it.
 pub fn delete_atom(req: DeleteAtomRequest) -> Result<DeleteResult, AtlasError> {
     let ctx = require_explicit_write_context(detect_context_full()?)?;
     let atom_ref = parse_atom_reference(&req.id, &ctx);
 
-    if !req.force {
-        let inbound_links = find_inbound_links(&atom_ref)?;
-        if !inbound_links.is_empty() {
-            return Err(AtlasError::Validation(format!(
-                "Cannot delete atom with inbound links from {}. Unlink them first or pass --force.",
-                inbound_links.join(", ")
-            )));
-        }
+    // Links are symmetric, so a reference left behind is a dangling half rather
+    // than an inbound edge anybody can follow.
+    let detached = find_inbound_links(&atom_ref)?;
+    for peer in &detached {
+        unlink(LinkRequest {
+            source: peer.clone(),
+            target: atom_ref.to_full_path(),
+        })?;
     }
 
     let _lock = ProjectLock::acquire(&atom_ref.org, &atom_ref.project)?;
@@ -239,6 +245,7 @@ pub fn delete_atom(req: DeleteAtomRequest) -> Result<DeleteResult, AtlasError> {
 
     Ok(DeleteResult {
         deleted: removed.is_some(),
+        detached,
     })
 }
 
@@ -250,7 +257,10 @@ fn find_inbound_links(target: &AtomRef) -> Result<Vec<String>, AtlasError> {
         let source_context = ProjectContext::new(target.org.clone(), project.clone());
 
         for entry in index.entries {
-            let atom = storage_read_atom(&target.org, &project, &entry.id)?;
+            // An index entry whose atom file is gone must not block an unrelated delete.
+            let Ok(atom) = storage_read_atom(&target.org, &project, &entry.id) else {
+                continue;
+            };
             if atom
                 .links
                 .iter()
@@ -261,6 +271,9 @@ fn find_inbound_links(target: &AtomRef) -> Result<Vec<String>, AtlasError> {
             }
         }
     }
+
+    // Projects arrive in directory order, which is not stable across machines.
+    inbound_links.sort();
 
     Ok(inbound_links)
 }

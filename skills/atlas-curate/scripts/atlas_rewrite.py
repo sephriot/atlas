@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Edit one atom without losing the fields you did not mention.
 
-`atlas update` is a full replace: every field left off the command is cleared,
-tags, sources, links and pitfalls included. This reads the atom, applies the
-requested change, repasses everything else, then re-reads and fails if any
-field moved that was not asked to move.
+`atlas update` is a patch, so this is a verifier rather than a workaround: it reads
+the atom, applies the requested change, repasses every list in full, then re-reads
+and fails if any field moved that was not asked to move. Links change through
+`atlas link` and `atlas unlink`, which write the peer atom too — the check below
+covers the atom named by --id only.
 
 Runs atlas through argv rather than a shell, so payloads containing quotes,
 backticks or `$(...)` are passed through literally instead of being executed.
@@ -38,7 +39,9 @@ def apply_edits(atom, args):
             edited[field] = value
     if args.details_file:
         with open(args.details_file) as handle:
-            edited["details"] = handle.read()
+            # Stored details carry no trailing newline, so keeping the file's would
+            # report drift on every write that succeeded.
+            edited["details"] = handle.read().rstrip("\n")
 
     def listedit(field, add, remove):
         items = list(edited[field])
@@ -157,6 +160,10 @@ def main():
             print("  got    %r" % (verify[field],), file=sys.stderr)
         raise SystemExit(1)
     print("%s: written and verified" % args.id)
+
+    if verify["links"] and {"title", "summary", "details"} & set(changed):
+        print("what this atom says changed; re-read these edges: %s"
+              % ", ".join(verify["links"]))
 
 
 if __name__ == "__main__":
