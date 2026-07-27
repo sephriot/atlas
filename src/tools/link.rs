@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::context::detect_context_full;
+use crate::context::{detect_context_full, require_explicit_write_context};
 use crate::error::AtlasError;
 use crate::locking::ProjectLock;
 use crate::models::IndexEntry;
@@ -70,7 +70,7 @@ fn format_link_for_storage(source_project: &str, target_project: &str, target_id
 
 /// Create a directed link from source atom to target atom.
 pub fn link(req: LinkRequest) -> Result<LinkResponse, AtlasError> {
-    let ctx = detect_context_full()?.context;
+    let ctx = require_explicit_write_context(detect_context_full()?)?;
 
     // Parse source and target with full path support
     let source_ref = parse_atom_reference(&req.source, &ctx);
@@ -138,7 +138,7 @@ pub fn link(req: LinkRequest) -> Result<LinkResponse, AtlasError> {
 
 /// Remove a directed link from source atom to target atom.
 pub fn unlink(req: LinkRequest) -> Result<UnlinkResponse, AtlasError> {
-    let ctx = detect_context_full()?.context;
+    let ctx = require_explicit_write_context(detect_context_full()?)?;
 
     // Parse source and target with full path support
     let source_ref = parse_atom_reference(&req.source, &ctx);

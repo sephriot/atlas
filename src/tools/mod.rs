@@ -10,4 +10,4 @@ pub use atoms::{
 };
 pub use link::{link, unlink, LinkRequest};
 pub use search::{search, SearchRequest};
-pub use write::{create_atom, update_atom, AtomWriteRequest};
+pub use write::{create_atom, update_atom, AtomUpdateRequest, AtomWriteRequest};

@@ -2,7 +2,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::config::get_project_path;
-use crate::context::detect_context_full;
+use crate::context::{detect_context_full, require_explicit_write_context};
 use crate::error::AtlasError;
 use crate::locking::ProjectLock;
 use crate::models::{Atom, AtomType, Confidence, IndexEntry};
@@ -121,6 +121,24 @@ pub struct AtomWriteRequest {
     pub links: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AtomUpdateRequest {
+    pub title: Option<String>,
+    pub atom_type: Option<AtomType>,
+    pub confidence: Option<Confidence>,
+    pub summary: Option<String>,
+    pub details: Option<String>,
+    pub clear_details: bool,
+    pub pitfalls: Option<Vec<String>>,
+    pub clear_pitfalls: bool,
+    pub tags: Option<Vec<String>>,
+    pub clear_tags: bool,
+    pub sources: Option<Vec<String>>,
+    pub clear_sources: bool,
+    pub links: Option<Vec<String>>,
+    pub clear_links: bool,
+}
+
 /// Atom write response.
 #[derive(Debug, Clone, Serialize)]
 pub struct AtomWriteResult {
@@ -131,33 +149,73 @@ pub struct AtomWriteResult {
 
 /// Create a new atom.
 pub fn create_atom(req: AtomWriteRequest) -> Result<AtomWriteResult, AtlasError> {
-    write_atom_request(None, req)
+    write_atom_request(req)
 }
 
 /// Update an existing atom by ID.
-pub fn update_atom(id: String, req: AtomWriteRequest) -> Result<AtomWriteResult, AtlasError> {
-    write_atom_request(Some(id), req)
+pub fn update_atom(id: String, req: AtomUpdateRequest) -> Result<AtomWriteResult, AtlasError> {
+    let detected = detect_context_full()?;
+    let ctx = require_explicit_write_context(detected)?;
+    let atom_ref = parse_atom_reference(&id, &ctx);
+
+    if let Some(ref links) = req.links {
+        validate_links(&atom_ref.org, links, &ctx)?;
+    }
+
+    let _lock = ProjectLock::acquire(&atom_ref.org, &atom_ref.project)?;
+    let mut atom = read_atom(&atom_ref.org, &atom_ref.project, &atom_ref.id)?;
+    let mut index = load_index(&atom_ref.org, &atom_ref.project)?;
+
+    if let Some(title) = req.title {
+        atom.title = title;
+    }
+    if let Some(atom_type) = req.atom_type {
+        atom.atom_type = atom_type;
+    }
+    if let Some(confidence) = req.confidence {
+        atom.confidence = confidence;
+    }
+    if let Some(summary) = req.summary {
+        atom.summary = summary;
+    }
+    if let Some(details) = req.details {
+        atom.details = Some(details);
+    } else if req.clear_details {
+        atom.details = None;
+    }
+    apply_vec_update(&mut atom.pitfalls, req.pitfalls, req.clear_pitfalls);
+    apply_vec_update(&mut atom.tags, req.tags, req.clear_tags);
+    apply_vec_update(&mut atom.sources, req.sources, req.clear_sources);
+    apply_vec_update(&mut atom.links, req.links, req.clear_links);
+    atom.updated_at = Utc::now().date_naive();
+
+    write_atom(&atom_ref.org, &atom_ref.project, &atom)?;
+    index.insert_or_replace_entry(IndexEntry::from_atom(&atom));
+    save_index(&atom_ref.org, &atom_ref.project, &index)?;
+
+    Ok(AtomWriteResult {
+        id: format_atom_reference(&atom_ref.org, &atom_ref.project, &atom.id),
+        created: false,
+    })
 }
 
-fn write_atom_request(
-    id: Option<String>,
-    req: AtomWriteRequest,
-) -> Result<AtomWriteResult, AtlasError> {
+fn apply_vec_update(target: &mut Vec<String>, replacement: Option<Vec<String>>, clear: bool) {
+    if let Some(replacement) = replacement {
+        *target = replacement;
+    } else if clear {
+        target.clear();
+    }
+}
+
+fn write_atom_request(req: AtomWriteRequest) -> Result<AtomWriteResult, AtlasError> {
     // Validate array fields aren't stringified JSON
     validate_array_fields(&req)?;
 
     let detected = detect_context_full()?;
-    let ctx = detected.context;
+    let ctx = require_explicit_write_context(detected)?;
 
-    // Determine org/project based on whether this is an update or create
-    let (target_org, target_project) = if let Some(ref id) = id {
-        // Update: parse full path from id
-        let atom_ref = parse_atom_reference(id, &ctx);
-        (atom_ref.org, atom_ref.project)
-    } else {
-        // Create: use detected context
-        (ctx.org.clone(), ctx.project.clone())
-    };
+    let target_org = ctx.org.clone();
+    let target_project = ctx.project.clone();
 
     // Validate links before acquiring lock
     if let Some(ref links) = req.links {
@@ -171,32 +229,14 @@ fn write_atom_request(
 
     let mut index = load_index(&target_org, &target_project)?;
 
-    let (atom, created) = if let Some(ref id_str) = id {
-        // Update existing - re-parse to get just the ID part
-        let atom_ref = parse_atom_reference(id_str, &ctx);
-        let mut atom = read_atom(&target_org, &target_project, &atom_ref.id)?;
-        atom.title = req.title;
-        atom.atom_type = req.atom_type;
-        atom.confidence = req.confidence;
-        atom.summary = req.summary;
-        atom.details = req.details;
-        atom.pitfalls = req.pitfalls.unwrap_or_default();
-        atom.tags = req.tags.unwrap_or_default();
-        atom.sources = req.sources.unwrap_or_default();
-        atom.links = req.links.unwrap_or_default();
-        atom.updated_at = Utc::now().date_naive();
-        (atom, false)
-    } else {
-        // Create new
-        let id = index.generate_id();
-        let mut atom = Atom::new(id, req.title, req.atom_type, req.confidence, req.summary);
-        atom.details = req.details;
-        atom.pitfalls = req.pitfalls.unwrap_or_default();
-        atom.tags = req.tags.unwrap_or_default();
-        atom.sources = req.sources.unwrap_or_default();
-        atom.links = req.links.unwrap_or_default();
-        (atom, true)
-    };
+    let id = index.generate_id();
+    let mut atom = Atom::new(id, req.title, req.atom_type, req.confidence, req.summary);
+    atom.details = req.details;
+    atom.pitfalls = req.pitfalls.unwrap_or_default();
+    atom.tags = req.tags.unwrap_or_default();
+    atom.sources = req.sources.unwrap_or_default();
+    atom.links = req.links.unwrap_or_default();
+    let created = true;
 
     // Write atom
     write_atom(&target_org, &target_project, &atom)?;

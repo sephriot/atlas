@@ -5,8 +5,10 @@ use std::fmt;
 /// Different clients have different workflows and emphases.
 #[derive(Debug, Clone, Copy, Default, ValueEnum, PartialEq, Eq)]
 pub enum ClientContext {
-    /// Claude Code - agentic coding with proactive knowledge use
+    /// General-purpose agent instructions
     #[default]
+    Agent,
+    /// Claude Code - agentic coding with proactive knowledge use
     ClaudeCode,
     /// IDE assistants (VSCode, Cursor) - reactive, code-focused
     Ide,
@@ -18,6 +20,7 @@ impl ClientContext {
     /// Returns the instructions tailored for this client context.
     pub fn instructions(&self) -> &'static str {
         match self {
+            ClientContext::Agent => INSTRUCTIONS_AGENT,
             ClientContext::ClaudeCode => INSTRUCTIONS_CLAUDE_CODE,
             ClientContext::Ide => INSTRUCTIONS_IDE,
             ClientContext::Codex => INSTRUCTIONS_CODEX,
@@ -28,6 +31,7 @@ impl ClientContext {
 impl fmt::Display for ClientContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ClientContext::Agent => write!(f, "agent"),
             ClientContext::ClaudeCode => write!(f, "claude-code"),
             ClientContext::Ide => write!(f, "ide"),
             ClientContext::Codex => write!(f, "codex"),
@@ -40,16 +44,32 @@ impl std::str::FromStr for ClientContext {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
+            "agent" => Ok(ClientContext::Agent),
             "claude-code" => Ok(ClientContext::ClaudeCode),
             "ide" => Ok(ClientContext::Ide),
             "codex" => Ok(ClientContext::Codex),
             _ => Err(format!(
-                "unknown client context '{}', expected: claude-code, ide, codex",
+                "unknown client context '{}', expected: agent, claude-code, ide, codex",
                 s
             )),
         }
     }
 }
+
+const INSTRUCTIONS_AGENT: &str = r#"Atlas CLI - Long-term memory for coding agents.
+
+WORKFLOW:
+1. Verify context: `atlas context`.
+2. Search the current project: `atlas search "<query>"`.
+3. Read full atoms: `atlas get <id>`.
+4. Record reusable knowledge with `atlas create`; use `atlas update --id <id> --summary "..."` for a patch.
+
+SAFETY:
+- Writes require a context detected from CLI flags, local storage, or git. If context is fallback, rerun with `--org <org> --project <project>`.
+- Search is current-project by default. Use `--scope <org>` to search across an organization.
+- Updates preserve omitted fields. Use `--clear-details`, `--clear-tags`, `--clear-sources`, `--clear-pitfalls`, or `--clear-links` to remove data.
+- Delete refuses atoms with inbound links unless `--force` is explicit.
+"#;
 
 const INSTRUCTIONS_CLAUDE_CODE: &str = r#"Atlas CLI - Long-term memory for AI agents.
 
@@ -78,7 +98,9 @@ LINKING:
 - Links are directed: A links to B does NOT mean B links to A
 - Cross-project links supported within same org
 
-CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallback. Use `atlas context` to verify. If fallback is wrong, rerun commands with `--org <org> --project <project>`.
+CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallback. Use `atlas context` to verify. Fallback context is read-only; rerun mutations with `--org <org> --project <project>`.
+
+SAFETY: Search is current-project by default; use `--scope <org>` for cross-project discovery. Updates preserve omitted fields and use `--clear-*` to remove data. Delete requires `--force` when inbound links exist.
 
 CITATION: Reference atom IDs in reasoning, e.g., [K-000042]
 
@@ -105,7 +127,9 @@ ATOM TYPES:
 
 ATOM IDs: Commands accept full path, project/id, or bare id.
 
-CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallback. Use `atlas context`.
+CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallback. Use `atlas context`. Fallback context is read-only; rerun mutations with `--org <org> --project <project>`.
+
+SAFETY: Search is current-project by default; use `--scope <org>` for cross-project discovery. Updates preserve omitted fields and use `--clear-*` to remove data. Delete requires `--force` when inbound links exist.
 
 PIPE-FRIENDLY USAGE:
 - Pipe text into `atlas search` when the query is already available on stdin
@@ -125,7 +149,9 @@ ATOM TYPES: note, gotcha, recipe, decision
 
 ATOM IDs: Full path (org/project/id), project/id, or bare id
 
-CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallback
+CONTEXT: Auto-detected from `--org/--project`, `.atlas/`, git remote, then fallback. Fallback context is read-only; rerun mutations with `--org <org> --project <project>`.
+
+SAFETY: Search is current-project by default; use `--scope <org>` for cross-project discovery. Updates preserve omitted fields and use `--clear-*` to remove data. Delete requires `--force` when inbound links exist.
 
 PIPE-FRIENDLY USAGE:
 - `printf '%s\n' "$TASK" | atlas search --page-size 10`
@@ -137,12 +163,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_is_claude_code() {
-        assert_eq!(ClientContext::default(), ClientContext::ClaudeCode);
+    fn test_default_is_agent() {
+        assert_eq!(ClientContext::default(), ClientContext::Agent);
     }
 
     #[test]
     fn test_from_str() {
+        assert_eq!(
+            "agent".parse::<ClientContext>().unwrap(),
+            ClientContext::Agent
+        );
         assert_eq!(
             "claude-code".parse::<ClientContext>().unwrap(),
             ClientContext::ClaudeCode
@@ -158,6 +188,7 @@ mod tests {
 
     #[test]
     fn test_display() {
+        assert_eq!(ClientContext::Agent.to_string(), "agent");
         assert_eq!(ClientContext::ClaudeCode.to_string(), "claude-code");
         assert_eq!(ClientContext::Ide.to_string(), "ide");
         assert_eq!(ClientContext::Codex.to_string(), "codex");
@@ -165,6 +196,7 @@ mod tests {
 
     #[test]
     fn test_instructions_not_empty() {
+        assert!(!ClientContext::Agent.instructions().is_empty());
         assert!(!ClientContext::ClaudeCode.instructions().is_empty());
         assert!(!ClientContext::Ide.instructions().is_empty());
         assert!(!ClientContext::Codex.instructions().is_empty());

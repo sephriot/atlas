@@ -166,9 +166,32 @@ fn update_requires_id_and_updates_that_atom() {
         "medium",
         "--summary",
         "Original summary",
+        "--tag",
+        "original",
+        "--source",
+        "src/original.rs",
     ]);
     let created = run_json(create);
     let id = created["id"].as_str().expect("id should be a string");
+
+    let mut target = atlas(temp.path());
+    target.args([
+        "create",
+        "--title",
+        "Link target",
+        "--type",
+        "note",
+        "--confidence",
+        "high",
+        "--summary",
+        "Target summary",
+    ]);
+    let target = run_json(target);
+    let target_id = target["id"].as_str().expect("id should be a string");
+
+    let mut link = atlas(temp.path());
+    link.args(["link", id, target_id]);
+    run_json(link);
 
     let mut missing_id = atlas(temp.path());
     missing_id.args([
@@ -187,19 +210,7 @@ fn update_requires_id_and_updates_that_atom() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("--id"));
 
     let mut update = atlas(temp.path());
-    update.args([
-        "update",
-        "--id",
-        id,
-        "--title",
-        "Updated",
-        "--type",
-        "gotcha",
-        "--confidence",
-        "high",
-        "--summary",
-        "Updated summary",
-    ]);
+    update.args(["update", "--id", id, "--summary", "Updated summary"]);
     let updated = run_json(update);
     assert_eq!(updated["created"], false);
     assert_eq!(updated["id"], id);
@@ -207,7 +218,141 @@ fn update_requires_id_and_updates_that_atom() {
     let mut get = atlas(temp.path());
     get.args(["get", id]);
     let atom = run_json(get);
-    assert_eq!(atom["title"], "Updated");
+    assert_eq!(atom["title"], "Original");
     assert_eq!(atom["summary"], "Updated summary");
-    assert_eq!(atom["type"], "gotcha");
+    assert_eq!(atom["type"], "note");
+    assert_eq!(atom["tags"], serde_json::json!(["original"]));
+    assert_eq!(atom["sources"], serde_json::json!(["src/original.rs"]));
+    let target_link = target_id
+        .rsplit('/')
+        .next()
+        .expect("target ID should include an atom ID");
+    assert_eq!(atom["links"], serde_json::json!([target_link]));
+}
+
+#[test]
+fn create_rejects_fallback_context() {
+    let storage = TempDir::new("fallback-storage");
+    let cwd = TempDir::new("fallback-cwd");
+    let output = Command::new(env!("CARGO_BIN_EXE_atlas"))
+        .args([
+            "--storage",
+            storage
+                .path()
+                .to_str()
+                .expect("storage path should be UTF-8"),
+            "create",
+            "--title",
+            "Fallback write",
+            "--type",
+            "note",
+            "--confidence",
+            "high",
+            "--summary",
+            "Must require explicit context",
+        ])
+        .current_dir(cwd.path())
+        .output()
+        .expect("command should run");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("fallback"));
+}
+
+#[test]
+fn search_defaults_to_the_current_project() {
+    let temp = TempDir::new("project-search");
+
+    let mut current = atlas(temp.path());
+    current.args([
+        "create",
+        "--title",
+        "Shared query current",
+        "--type",
+        "note",
+        "--confidence",
+        "high",
+        "--summary",
+        "Shared query",
+    ]);
+    run_json(current);
+
+    let mut other = Command::new(env!("CARGO_BIN_EXE_atlas"));
+    other.args([
+        "--storage",
+        temp.path().to_str().expect("storage path should be UTF-8"),
+        "--org",
+        "acme",
+        "--project",
+        "other",
+        "--format",
+        "json",
+        "create",
+        "--title",
+        "Shared query other",
+        "--type",
+        "note",
+        "--confidence",
+        "high",
+        "--summary",
+        "Shared query",
+    ]);
+    run_json(other);
+
+    let mut search = atlas(temp.path());
+    search.args(["search", "Shared query"]);
+    let results = run_json(search);
+
+    assert_eq!(results["total"], 1);
+    assert_eq!(results["results"][0]["id"], "acme/atlas/K-000001");
+}
+
+#[test]
+fn delete_rejects_atoms_with_inbound_links_without_force() {
+    let temp = TempDir::new("delete-inbound-links");
+
+    let mut source = atlas(temp.path());
+    source.args([
+        "create",
+        "--title",
+        "Source",
+        "--type",
+        "note",
+        "--confidence",
+        "high",
+        "--summary",
+        "Source summary",
+    ]);
+    let source = run_json(source);
+
+    let mut target = atlas(temp.path());
+    target.args([
+        "create",
+        "--title",
+        "Target",
+        "--type",
+        "note",
+        "--confidence",
+        "high",
+        "--summary",
+        "Target summary",
+    ]);
+    let target = run_json(target);
+
+    let source_id = source["id"].as_str().expect("source ID should be a string");
+    let target_id = target["id"].as_str().expect("target ID should be a string");
+    let mut link = atlas(temp.path());
+    link.args(["link", source_id, target_id]);
+    run_json(link);
+
+    let mut delete = atlas(temp.path());
+    delete.args(["delete", target_id]);
+    let output = delete.output().expect("command should run");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("inbound links"));
+
+    let mut force_delete = atlas(temp.path());
+    force_delete.args(["delete", "--force", target_id]);
+    let result = run_json(force_delete);
+    assert_eq!(result["deleted"], true);
 }

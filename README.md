@@ -32,7 +32,7 @@ The binary is named `atlas`.
 # Verify context
 atlas context
 
-# Search memory
+# Search the current project's memory
 atlas search "error handling" --page-size 10
 
 # Fetch a full atom
@@ -97,6 +97,11 @@ cat notes.md | atlas create \
 Updates are explicit: use `atlas update --id <atom-id> ...`. Atlas does not match
 atoms by title because titles are mutable metadata, not stable identity.
 
+Updates are patches: fields omitted from the command stay unchanged. Use
+`--clear-details`, `--clear-tags`, `--clear-sources`, `--clear-pitfalls`, or
+`--clear-links` to remove stored data. Delete refuses atoms with inbound links
+unless `--force` is explicit.
+
 Global options:
 
 ```bash
@@ -146,10 +151,18 @@ Supported git URL formats include:
 - `https://github.com/org/project.git`
 - `git@gitlab.com:org/project.git`
 
-When fallback is wrong, pass explicit context:
+Fallback context is read-only. Pass explicit context before creating, updating,
+deleting, linking, or unlinking atoms:
 
 ```bash
 atlas --org my-company --project my-service context
+```
+
+Search uses the current project by default. Use an organization scope for
+cross-project discovery:
+
+```bash
+atlas search "error handling" --scope my-company
 ```
 
 ## Storage

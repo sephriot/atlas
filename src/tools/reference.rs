@@ -80,7 +80,7 @@ const PLACEHOLDER_PATTERNS: &[&str] = &[
 /// Parse scope filter for search/list operations.
 ///
 /// Accepts:
-/// - None -> use detected context (search entire org)
+/// - None -> use detected project
 /// - "org" -> search all projects in that org
 /// - "org/project" -> search only that project
 ///
@@ -90,7 +90,7 @@ pub fn parse_scope(
     ctx: &ProjectContext,
 ) -> Result<(String, Option<String>), AtlasError> {
     match scope {
-        None => Ok((ctx.org.clone(), None)),
+        None => Ok((ctx.org.clone(), Some(ctx.project.clone()))),
         Some(s) => {
             // Reject common placeholder patterns
             if PLACEHOLDER_PATTERNS.contains(&s.to_lowercase().as_str()) {
@@ -202,7 +202,7 @@ mod tests {
         let ctx = test_ctx();
         let (org, proj) = parse_scope(None, &ctx).unwrap();
         assert_eq!(org, "test-org");
-        assert_eq!(proj, None);
+        assert_eq!(proj, Some("test-project".to_string()));
     }
 
     #[test]

@@ -2,14 +2,17 @@ use std::os::unix::fs::symlink;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{get_orgs_path, get_project_path};
-use crate::context::{detect_context_full, validate_name, ContextSource};
+use crate::config::{get_orgs_path, get_project_path, list_org_projects};
+use crate::context::{
+    detect_context_full, require_explicit_write_context, validate_name, ContextSource,
+    ProjectContext,
+};
 use crate::error::AtlasError;
 use crate::locking::ProjectLock;
 use crate::models::{Atom, AtomType, Confidence, IndexEntry};
 use crate::storage::{delete_atom_file, load_index, read_atom as storage_read_atom, save_index};
 
-use super::reference::{format_atom_reference, parse_atom_reference, parse_scope};
+use super::reference::{format_atom_reference, parse_atom_reference, parse_scope, AtomRef};
 
 // ============================================================================
 // Context Hint Support
@@ -196,6 +199,7 @@ pub fn list_atoms(req: ListAtomsRequest) -> Result<Vec<ListAtomResult>, AtlasErr
 pub struct DeleteAtomRequest {
     /// Atom ID: "org/project/K-000001", "project/K-000001", or "K-000001"
     pub id: String,
+    pub force: bool,
 }
 
 /// Delete result.
@@ -206,8 +210,18 @@ pub struct DeleteResult {
 
 /// Delete an atom.
 pub fn delete_atom(req: DeleteAtomRequest) -> Result<DeleteResult, AtlasError> {
-    let ctx = detect_context_full()?.context;
+    let ctx = require_explicit_write_context(detect_context_full()?)?;
     let atom_ref = parse_atom_reference(&req.id, &ctx);
+
+    if !req.force {
+        let inbound_links = find_inbound_links(&atom_ref)?;
+        if !inbound_links.is_empty() {
+            return Err(AtlasError::Validation(format!(
+                "Cannot delete atom with inbound links from {}. Unlink them first or pass --force.",
+                inbound_links.join(", ")
+            )));
+        }
+    }
 
     let _lock = ProjectLock::acquire(&atom_ref.org, &atom_ref.project)?;
 
@@ -226,6 +240,29 @@ pub fn delete_atom(req: DeleteAtomRequest) -> Result<DeleteResult, AtlasError> {
     Ok(DeleteResult {
         deleted: removed.is_some(),
     })
+}
+
+fn find_inbound_links(target: &AtomRef) -> Result<Vec<String>, AtlasError> {
+    let mut inbound_links = Vec::new();
+
+    for project in list_org_projects(&target.org)? {
+        let index = load_index(&target.org, &project)?;
+        let source_context = ProjectContext::new(target.org.clone(), project.clone());
+
+        for entry in index.entries {
+            let atom = storage_read_atom(&target.org, &project, &entry.id)?;
+            if atom
+                .links
+                .iter()
+                .map(|link| parse_atom_reference(link, &source_context))
+                .any(|link| link == *target)
+            {
+                inbound_links.push(format_atom_reference(&target.org, &project, &atom.id));
+            }
+        }
+    }
+
+    Ok(inbound_links)
 }
 
 // ============================================================================

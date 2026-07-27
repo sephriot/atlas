@@ -9,8 +9,9 @@ use crate::error::AtlasError;
 use crate::models::{AtomType, Confidence};
 use crate::tools::{
     create_atom, delete_atom, enable_local_storage, get_atom, get_context, link, list_atoms,
-    list_projects, search, unlink, update_atom, AtomWriteRequest, DeleteAtomRequest,
-    EnableLocalStorageRequest, GetAtomRequest, LinkRequest, ListAtomsRequest, SearchRequest,
+    list_projects, search, unlink, update_atom, AtomUpdateRequest, AtomWriteRequest,
+    DeleteAtomRequest, EnableLocalStorageRequest, GetAtomRequest, LinkRequest, ListAtomsRequest,
+    SearchRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -113,13 +114,17 @@ pub enum Commands {
         id: String,
 
         #[command(flatten)]
-        content: AtomWriteArgs,
+        content: AtomUpdateArgs,
     },
 
     /// Delete an atom
     Delete {
         /// Atom ID (org/project/id, project/id, or bare id)
         id: String,
+
+        /// Delete even when other atoms link to this one
+        #[arg(long)]
+        force: bool,
     },
 
     /// Create a directed link between atoms
@@ -204,6 +209,51 @@ pub struct AtomWriteArgs {
     link: Vec<String>,
 }
 
+#[derive(Args, Debug)]
+pub struct AtomUpdateArgs {
+    #[arg(long)]
+    title: Option<String>,
+
+    #[arg(long = "type", short = 't')]
+    atom_type: Option<AtomType>,
+
+    #[arg(long, short = 'c')]
+    confidence: Option<Confidence>,
+
+    #[arg(long)]
+    summary: Option<String>,
+
+    #[arg(long)]
+    details: Option<String>,
+
+    #[arg(long, conflicts_with = "details")]
+    clear_details: bool,
+
+    #[arg(long)]
+    pitfall: Vec<String>,
+
+    #[arg(long, conflicts_with = "pitfall")]
+    clear_pitfalls: bool,
+
+    #[arg(long, short = 'T')]
+    tag: Vec<String>,
+
+    #[arg(long, conflicts_with = "tag")]
+    clear_tags: bool,
+
+    #[arg(long)]
+    source: Vec<String>,
+
+    #[arg(long, conflicts_with = "source")]
+    clear_sources: bool,
+
+    #[arg(long)]
+    link: Vec<String>,
+
+    #[arg(long, conflicts_with = "link")]
+    clear_links: bool,
+}
+
 /// Run a CLI command and print output.
 pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
     match cmd {
@@ -275,12 +325,12 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
             print_output(&result, format)?;
         }
         Commands::Update { id, content } => {
-            let req = atom_write_request_from_args(content)?;
+            let req = atom_update_request_from_args(content)?;
             let result = update_atom(id, req)?;
             print_output(&result, format)?;
         }
-        Commands::Delete { id } => {
-            let result = delete_atom(DeleteAtomRequest { id })?;
+        Commands::Delete { id, force } => {
+            let result = delete_atom(DeleteAtomRequest { id, force })?;
             print_output(&result, format)?;
         }
         Commands::Link { source, target } => {
@@ -312,6 +362,67 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn atom_update_request_from_args(args: AtomUpdateArgs) -> Result<AtomUpdateRequest, AtlasError> {
+    let details_from_stdin = args.details.as_deref() == Some("-");
+    let details = match args.details {
+        Some(details) if details == "-" => Some(read_stdin()?),
+        Some(details) => Some(details),
+        None => None,
+    };
+
+    if args.summary.as_deref() == Some("-") {
+        return Err(AtlasError::Validation(
+            "Use --details - for update stdin input; --summary - is not supported for patch updates."
+                .to_string(),
+        ));
+    }
+
+    if details_from_stdin && args.clear_details {
+        return Err(AtlasError::Validation(
+            "--details and --clear-details cannot be used together".to_string(),
+        ));
+    }
+
+    let request = AtomUpdateRequest {
+        title: args.title,
+        atom_type: args.atom_type,
+        confidence: args.confidence,
+        summary: args.summary,
+        details,
+        clear_details: args.clear_details,
+        pitfalls: (!args.pitfall.is_empty()).then_some(args.pitfall),
+        clear_pitfalls: args.clear_pitfalls,
+        tags: (!args.tag.is_empty()).then_some(args.tag),
+        clear_tags: args.clear_tags,
+        sources: (!args.source.is_empty()).then_some(args.source),
+        clear_sources: args.clear_sources,
+        links: (!args.link.is_empty()).then_some(args.link),
+        clear_links: args.clear_links,
+    };
+
+    if request.title.is_none()
+        && request.atom_type.is_none()
+        && request.confidence.is_none()
+        && request.summary.is_none()
+        && request.details.is_none()
+        && !request.clear_details
+        && request.pitfalls.is_none()
+        && !request.clear_pitfalls
+        && request.tags.is_none()
+        && !request.clear_tags
+        && request.sources.is_none()
+        && !request.clear_sources
+        && request.links.is_none()
+        && !request.clear_links
+    {
+        return Err(AtlasError::Validation(
+            "Provide at least one field to update or clear.".to_string(),
+        ));
+    }
+
+    Ok(request)
 }
 
 fn atom_write_request_from_args(args: AtomWriteArgs) -> Result<AtomWriteRequest, AtlasError> {

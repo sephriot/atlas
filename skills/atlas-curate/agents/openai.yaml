@@ -1,0 +1,5 @@
+interface:
+  display_name: "Atlas Curate"
+  short_description: "Audit and curate one project's Atlas atoms against the code"
+policy:
+  allow_implicit_invocation: false

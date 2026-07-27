@@ -33,10 +33,22 @@ impl DetectedContext {
     }
 
     /// Returns true if context was detected via fallback.
-    #[allow(dead_code)]
     pub fn is_fallback(&self) -> bool {
         matches!(self.source, ContextSource::Fallback)
     }
+}
+
+pub fn require_explicit_write_context(
+    detected: DetectedContext,
+) -> Result<ProjectContext, AtlasError> {
+    if detected.is_fallback() {
+        return Err(AtlasError::Validation(
+            "Cannot modify Atlas using fallback context. Pass --org <org> --project <project>."
+                .to_string(),
+        ));
+    }
+
+    Ok(detected.context)
 }
 
 /// Detected project context.
