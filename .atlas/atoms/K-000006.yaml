@@ -1,8 +1,20 @@
 id: K-000006
-title: CLI mutations use one clear vocabulary
+title: CLI mutations use one clear vocabulary; the edge-command part was later overwritten
 type: decision
 confidence: high
-summary: Atlas 0.3 makes update IDs positional, uses typed clear fields, and reserves edge changes for link commands.
+summary: Atlas 0.3 made update IDs positional and consolidated field clearing into typed --clear <field>. It also reserved every edge change for the link commands; that part no longer holds, because create takes --link. Update still does not.
+details: |-
+  Atlas 0.3, 2026-07-27. Positional update IDs, typed `--clear <field>` instead of a clear
+  flag per field, and local-storage context taken from normal detection.
+
+  One requirement from this decision was overwritten the same week: it also reserved every
+  atom link change for `atlas link` and `atlas unlink`, keeping link fields off `create` and
+  `update`. `create --link` exists now — see [K-000009] for why the rule survives for
+  `update` and not for `create`. The clear-field and positional-ID vocabulary is untouched.
+
+  The 0.3 spec also required keeping the inbound-link check that refused a delete. That went
+  too, replaced by a delete that unlinks the atom from everything referencing it; see
+  [K-000007].
 tags:
 - cli
 - usability
@@ -10,4 +22,8 @@ tags:
 sources:
 - src/cli.rs
 - README.md
+links:
+- K-000007
+- ai/K-000023
+- K-000009
 updated_at: 2026-07-27

@@ -1,0 +1,80 @@
+id: K-000009
+title: atlas create takes --link; update still does not, and the split is deliberate
+type: decision
+confidence: high
+summary: create --link records an atom together with its mutual edges, repeatable, failing without a write if a named peer does not exist. update keeps no link fields because it patches one atom while an edge belongs to two; instead it reports the edges back, since rewriting what an atom says can outdate why it was linked. Overwrites the 0.3 rule reserving all edge changes for the link commands.
+details: |-
+  Decided 2026-07-27, replacing the 0.3 requirement that atom links be created and removed
+  only through `atlas link` and `atlas unlink` — see [K-000006], which now records the
+  narrower rule that survived.
+
+  ## What changed
+
+  `atlas create --link <atom-id>` is repeatable and records an atom together with its
+  edges. `update` still takes no link fields.
+
+  The split is not a compromise, it is the actual asymmetry:
+
+  - **Create is where the edge gets forgotten.** The atom does not exist yet, so the edge
+    cannot be written until after the create, which makes it a second command at precisely
+    the moment attention moves on. The census behind [K-000007] is what forgetting looks
+    like at scale: 1123 atoms, 61 cross-project edges, and the largest project holding none
+    of them outbound.
+  - **Update has no such gap.** The atom already exists, so `atlas link` is available at any
+    time and is one short idempotent command. Putting link fields on `update` would also
+    give a patch command scoped to one ID a side effect on a different atom, since an edge
+    now belongs to two atoms.
+
+  ## Update surfaces edges instead of editing them
+
+  Keeping link fields off `update` leaves a real hazard: rewrite what an atom says and its
+  edges stay exactly as they were, justified by text that no longer exists. So `update`
+  reports the atom's edges back as `links`, fully qualified, omitting the field when there
+  are none. The list is a question — which of these still explains something? — and the
+  guidance in `atlas-put` and `atlas-curate` is to answer it in the same pass, with
+  `atlas unlink` where the answer is no.
+
+  `create` reports the same field, so one concept covers both: the edges this atom holds
+  after the write. The curation helper goes further and prints them only when the title,
+  summary or details moved, because those are the rewrites that can strip an edge of its
+  reason.
+
+  That is the shape of the answer to "why not `--add-link` on update": the edges belong in
+  front of you at update time, not editable there.
+
+  ## Behaviour worth knowing
+
+  Every named peer is read before the new atom is written, so a create that names a
+  nonexistent atom fails having written nothing and is safe to retry. Without that, a typo
+  in one of five `--link` values would leave a new atom holding four edges and no obvious
+  way to notice.
+
+  The edges themselves go through the same mutual link path, so `--link` cannot produce the
+  one-sided edges that [K-000007] set out to eliminate. Each half is stored relative to its
+  own project: a bare id on the new atom's side, `project/K-NNNNNN` on a sibling's.
+
+  The response reports the edges as `linked`, and omits the field when there are none, so
+  output for a plain create is unchanged.
+
+  ## Superseded reasoning
+
+  An earlier version of [K-000007] recorded this feature as rejected, on the grounds that it
+  reversed [K-000006] for marginal gain. Overruled deliberately: the gain is not convenience
+  but the one thing the whole edge effort is for, and mutual links removed the original
+  worry, since `--link` can no longer half-write an edge.
+tags:
+- cli
+- links
+- knowledge-model
+- create
+- agent-workflow
+sources:
+- src/tools/write.rs
+- src/cli.rs
+- README.md
+links:
+- K-000006
+- K-000007
+- ai/K-000042
+- ai/K-000023
+updated_at: 2026-07-27

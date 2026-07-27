@@ -1,0 +1,38 @@
+id: K-000008
+title: An index entry whose atom file is missing fails a whole batched read
+type: gotcha
+confidence: high
+summary: atlas get takes many IDs but returns nothing at all when one of them is unreadable, so a bulk reader needs a per-atom fallback and must report the unreadable IDs. Org-wide scans such as delete inherit the same failure and now skip entries they cannot read.
+details: |-
+  Found 2026-07-27 while building an org-wide link audit. A project index listed 329 atom
+  IDs while its atoms directory held 328 files: one ID resolved to nothing. Reading that ID
+  fails with a plain not-found, which is correct, but two things around it are not obvious.
+
+  **A batched read fails whole rather than partially.** `atlas get` accepts many IDs, on
+  argv or on stdin, and returns a JSON array. One unreadable ID makes the entire call exit
+  non-zero with no output at all — 328 readable atoms produced nothing. Any bulk reader
+  needs a per-atom fallback on failure, and should report the unreadable IDs as a finding
+  rather than swallowing them. The audit helper in atlas-curate does exactly that.
+
+  **Anything that scans the whole org inherits the failure.** Deleting an atom scans every
+  project in the org for inbound references, so before 0.4 a single orphaned index entry
+  anywhere in the org could block an unrelated delete. That scan now skips entries it
+  cannot read. See [K-000007].
+
+  The orphan itself is a store inconsistency, not a CLI bug: nothing in the CLI removes an
+  atom file without updating the index, so it most likely came from a partially applied
+  change or a hand edit. Worth checking for during curation — the audit reports index IDs
+  it cannot read before anything else, because every other count in the report is taken
+  over the atoms it could actually read.
+tags:
+- atlas
+- cli
+- gotcha
+- storage
+- curation
+sources:
+- src/tools/atoms.rs
+- skills/atlas-curate/scripts/atlas_audit.py
+links:
+- K-000007
+updated_at: 2026-07-27

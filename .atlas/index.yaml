@@ -1,4 +1,4 @@
-next_id: 7
+next_id: 10
 entries:
 - id: K-000001
   title: Atlas is now a CLI-only memory manager
@@ -61,7 +61,7 @@ entries:
   - src/cli.rs
   - tests/cli_write.rs
 - id: K-000006
-  title: CLI mutations use one clear vocabulary
+  title: CLI mutations use one clear vocabulary; the edge-command part was later overwritten
   type: decision
   confidence: high
   tags:
@@ -71,3 +71,64 @@ entries:
   sources:
   - src/cli.rs
   - README.md
+  links:
+  - K-000007
+  - ai/K-000023
+  - K-000009
+- id: K-000007
+  title: Atlas links are mutual, delete detaches peers, search spans the org by default
+  type: decision
+  confidence: high
+  tags:
+  - cli
+  - links
+  - knowledge-model
+  - search
+  - scope
+  - delete
+  sources:
+  - src/tools/link.rs
+  - src/tools/atoms.rs
+  - src/tools/search.rs
+  - src/client_context.rs
+  - README.md
+  links:
+  - ai/K-000042
+  - K-000008
+  - K-000006
+  - ai/K-000023
+  - K-000009
+- id: K-000008
+  title: An index entry whose atom file is missing fails a whole batched read
+  type: gotcha
+  confidence: high
+  tags:
+  - atlas
+  - cli
+  - gotcha
+  - storage
+  - curation
+  sources:
+  - src/tools/atoms.rs
+  - skills/atlas-curate/scripts/atlas_audit.py
+  links:
+  - K-000007
+- id: K-000009
+  title: atlas create takes --link; update still does not, and the split is deliberate
+  type: decision
+  confidence: high
+  tags:
+  - cli
+  - links
+  - knowledge-model
+  - create
+  - agent-workflow
+  sources:
+  - src/tools/write.rs
+  - src/cli.rs
+  - README.md
+  links:
+  - K-000006
+  - K-000007
+  - ai/K-000042
+  - ai/K-000023

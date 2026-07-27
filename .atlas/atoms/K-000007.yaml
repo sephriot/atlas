@@ -1,0 +1,95 @@
+id: K-000007
+title: Atlas links are mutual, delete detaches peers, search spans the org by default
+type: decision
+confidence: high
+summary: 'Atlas 0.4.0 makes link and unlink write both atoms, makes delete unlink the atom from everything that referenced it, and defaults search to the whole org with the current project ranked first. All three come from one census finding: hub projects held inbound edges they could not follow, so knowledge in a sibling repository was unreachable.'
+details: |-
+  Decided 2026-07-27, Atlas 0.4.0. Three changes to how knowledge is reachable, all from
+  one observation: a project-scoped default plus one-directional edges meant knowledge in
+  a sibling repository was effectively unreachable.
+
+  ## The evidence that prompted it
+
+  A census of the store found 1123 atoms holding 1131 in-project edges and 61
+  cross-project edges. The distribution was the finding, not the ratio:
+
+  - backend, the largest project at 301 atoms, held zero outbound cross-project edges
+    while eight sibling projects pointed at it. Every one of those edges was written from
+    the sibling's side and was invisible from backend.
+  - fistax, 329 atoms, held one.
+  - intent-infra, 10 atoms, held 24 — small projects that exist to tie others together
+    do link out; the hubs never do.
+
+  An agent working in a hub project therefore never saw the atoms written about it.
+
+  ## What changed
+
+  **Links are mutual.** `atlas link A B` writes the reference onto both atoms, `atlas
+  unlink A B` clears both. One call, no direction to reason about. Each half is stored
+  relative to its own project, so the same edge reads as a bare id on one side and
+  `project/K-NNNNNN` on the other. Re-running `link` on a pair that only holds the edge
+  one way restores the missing half, which makes backfilling pre-0.4 edges a safe,
+  idempotent operation rather than a migration.
+
+  Implementation notes worth keeping:
+
+  - Both projects are locked before either is written, ordered by org and project so two
+    concurrent links over the same pair cannot each hold what the other waits for. Same
+    project collapses to one lock, which matters because a second exclusive flock on the
+    same file from the same process would block forever.
+  - Membership is decided by resolving each stored link, never by string comparison.
+    Pre-0.4 data holds all three accepted forms for the same target, so a literal
+    comparison would both duplicate and fail to remove.
+  - Failure leaves at most one half written; a second `link` heals it. Deliberate, since
+    the alternative is a rollback path exercised only on IO errors.
+
+  **Delete detaches instead of refusing.** With symmetry, every linked atom has inbound
+  edges, so the old guard would have fired on nearly every delete. `atlas delete` now
+  unlinks the atom from everything that referenced it and returns those atoms as
+  `detached`. The `--force` flag is gone, having lost its meaning. This revises the
+  requirement in the 0.3 simplification spec to keep inbound-link deletion protection —
+  see [K-000006]; the protection existed to prevent dangling half-edges, and detaching
+  prevents them outright.
+
+  Consequence to remember: the org-wide inbound scan is now unavoidable on every delete,
+  so an index entry whose atom file is missing must not abort it. Unreadable entries are
+  skipped rather than raised.
+
+  **Search spans the org by default.** The blend already existed but was unreachable
+  without asking: with a project in scope the search is narrow, without one it covers the
+  org and multiplies non-current-project scores by 0.7. Only the default was pinned to
+  the current project. Now `atlas search <query>` defaults to the org and
+  `--scope <org>/<project>` narrows. Local hits win ties by roughly 1.4x, so a precise
+  sibling match can still outrank a vague local one — which is the intent.
+
+  `atlas atoms` deliberately did not change: a listing is an inventory of where you are.
+  Its org-level scope was fixed separately, having silently answered with the active
+  project instead of the named org.
+
+  ## Recording an atom with its edges
+
+  `create --link` followed days later in the same week, overwriting the 0.3 rule that
+  reserved edge changes for the link commands. An earlier version of this atom recorded that
+  feature as rejected on the strength of that rule; it shipped instead, because forgetting
+  the second command is the failure the census above measures. See [K-000009]. `update` still
+  takes no link fields.
+tags:
+- cli
+- links
+- knowledge-model
+- search
+- scope
+- delete
+sources:
+- src/tools/link.rs
+- src/tools/atoms.rs
+- src/tools/search.rs
+- src/client_context.rs
+- README.md
+links:
+- ai/K-000042
+- K-000008
+- K-000006
+- ai/K-000023
+- K-000009
+updated_at: 2026-07-27
