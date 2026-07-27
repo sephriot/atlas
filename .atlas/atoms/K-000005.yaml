@@ -1,0 +1,16 @@
+id: K-000005
+title: Atlas create must not read ambient stdin when summary is provided
+type: gotcha
+confidence: high
+summary: Atlas create used to hang under Claude background Bash because it read non-TTY stdin as implicit details even when --summary was provided; now only missing summary or explicit '-' consumes stdin.
+details: 'Root cause: resolve_atom_write_text treated any non-TTY stdin as content. In Claude background commands stdin can be a pipe that remains open, so read_to_string waited for EOF and atlas create appeared stuck until Claude killed it. Fix: ambient stdin is only used when --summary is missing; --summary - and --details - remain explicit stdin consumers. Regression coverage: tests/cli_write.rs spawns atlas create with a piped stdin handle intentionally kept open and asserts the child exits promptly.'
+tags:
+- atlas
+- cli
+- stdin
+- claude
+- hang
+sources:
+- src/cli.rs
+- tests/cli_write.rs
+updated_at: 2026-06-22

@@ -1,0 +1,17 @@
+id: K-000002
+title: Atom writes use explicit create/update CLI commands
+type: decision
+confidence: high
+summary: 'Atlas public CLI separates atom creation from ID-based updates: use create for new atoms and update --id for existing atoms; titles are mutable metadata and are not used for identity.'
+tags:
+- cli
+- atom-write
+- create
+- update
+- title-identity
+sources:
+- src/cli.rs
+- src/tools/write.rs
+- tests/cli_write.rs
+- README.md
+updated_at: 2026-05-15

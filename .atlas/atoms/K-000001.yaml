@@ -1,0 +1,16 @@
+id: K-000001
+title: Atlas is now a CLI-only memory manager
+type: decision
+confidence: high
+summary: Atlas no longer exposes MCP transports. The Rust crate keeps the atom model, YAML storage, search/list/get/upsert/link operations, and context detection, but the executable now requires explicit CLI subcommands and is optimized for shell pipelines.
+details: 'Implementation notes from the CLI rewrite: remove rmcp, axum, tokio, schemars, parking_lot, tracing, and the server wrapper; make --org/--project override context before local storage or git; support stdin for search, get IDs, and upsert summary/details; add --ids output for search/atoms; expose agent guidance through atlas instructions; keep repo-local storage via enable-local.'
+tags:
+- atlas
+- cli
+- architecture
+- memory
+sources:
+- src/main.rs
+- src/cli.rs
+- README.md
+updated_at: 2026-05-15

@@ -1,0 +1,11 @@
+id: K-000004
+title: Improved search scoring documentation and context detection comments
+type: note
+confidence: high
+summary: Added comprehensive documentation to search scoring algorithm, improved error handling for index loading failures, and enhanced comments explaining context detection logic and cross-project scoring.
+details: Enhanced documentation and error handling in search and context detection modules
+tags:
+- documentation
+- code-quality
+- maintenance
+updated_at: 2026-06-01

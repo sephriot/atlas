@@ -1,0 +1,73 @@
+next_id: 7
+entries:
+- id: K-000001
+  title: Atlas is now a CLI-only memory manager
+  type: decision
+  confidence: high
+  tags:
+  - atlas
+  - cli
+  - architecture
+  - memory
+  sources:
+  - src/main.rs
+  - src/cli.rs
+  - README.md
+- id: K-000002
+  title: Atom writes use explicit create/update CLI commands
+  type: decision
+  confidence: high
+  tags:
+  - cli
+  - atom-write
+  - create
+  - update
+  - title-identity
+  sources:
+  - src/cli.rs
+  - src/tools/write.rs
+  - tests/cli_write.rs
+  - README.md
+- id: K-000003
+  title: Enhanced search scoring and context detection documentation
+  type: note
+  confidence: high
+  tags:
+  - documentation
+  - search
+  - context
+  sources:
+  - src/tools/search.rs
+  - src/context.rs
+- id: K-000004
+  title: Improved search scoring documentation and context detection comments
+  type: note
+  confidence: high
+  tags:
+  - documentation
+  - code-quality
+  - maintenance
+- id: K-000005
+  title: Atlas create must not read ambient stdin when summary is provided
+  type: gotcha
+  confidence: high
+  tags:
+  - atlas
+  - cli
+  - stdin
+  - claude
+  - hang
+  sources:
+  - src/cli.rs
+  - tests/cli_write.rs
+- id: K-000006
+  title: CLI mutations use one clear vocabulary
+  type: decision
+  confidence: high
+  tags:
+  - cli
+  - usability
+  - agent-workflow
+  sources:
+  - src/cli.rs
+  - README.md

@@ -1,0 +1,13 @@
+id: K-000003
+title: Enhanced search scoring and context detection documentation
+type: note
+confidence: high
+summary: Added comprehensive documentation to search scoring algorithm and context detection logic
+tags:
+- documentation
+- search
+- context
+sources:
+- src/tools/search.rs
+- src/context.rs
+updated_at: 2026-06-01

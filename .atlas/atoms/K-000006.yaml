@@ -1,0 +1,13 @@
+id: K-000006
+title: CLI mutations use one clear vocabulary
+type: decision
+confidence: high
+summary: Atlas 0.3 makes update IDs positional, uses typed clear fields, and reserves edge changes for link commands.
+tags:
+- cli
+- usability
+- agent-workflow
+sources:
+- src/cli.rs
+- README.md
+updated_at: 2026-07-27
