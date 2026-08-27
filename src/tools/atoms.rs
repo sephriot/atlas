@@ -196,6 +196,83 @@ pub fn list_atoms(req: ListAtomsRequest) -> Result<Vec<ListAtomResult>, AtlasErr
 }
 
 // ============================================================================
+// list_index
+// ============================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListIndexRequest {
+    /// Scope filter: org name or org/project path. Examples: "acme", "acme/backend"
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+/// Compact index.yaml entry for session-start injection.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct IndexAtom {
+    pub id: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub atom_type: AtomType,
+    pub confidence: Confidence,
+}
+
+impl IndexAtom {
+    fn from_entry(entry: &IndexEntry, project: &str, prefix_project: bool) -> Self {
+        let id = if prefix_project {
+            format!("{}/{}", project, entry.id)
+        } else {
+            entry.id.clone()
+        };
+        Self {
+            id,
+            title: entry.title.clone(),
+            atom_type: entry.atom_type,
+            confidence: entry.confidence,
+        }
+    }
+
+    pub fn to_text_line(&self) -> String {
+        format!(
+            "{} — {} ({}, {})",
+            self.id, self.title, self.atom_type, self.confidence
+        )
+    }
+}
+
+/// List index.yaml entries without reading atom files.
+pub fn list_index(req: ListIndexRequest) -> Result<Vec<IndexAtom>, AtlasError> {
+    let ctx = detect_context_full()?.context;
+    let (list_org, scope_project) = parse_scope(req.scope.as_deref(), &ctx)?;
+    let prefix_project = req.scope.is_some() && scope_project.is_none();
+
+    let projects_to_list: Vec<String> = match (req.scope.as_deref(), scope_project.as_deref()) {
+        (None, _) => vec![ctx.project.clone()],
+        (Some(_), Some(proj)) => vec![proj.to_string()],
+        (Some(_), None) => {
+            let mut projects = list_org_projects(&list_org)?;
+            projects.sort();
+            projects
+        }
+    };
+
+    let mut results: Vec<IndexAtom> = Vec::new();
+
+    for project_name in projects_to_list {
+        let _lock = ProjectLock::acquire(&list_org, &project_name)?;
+        let index = match load_index(&list_org, &project_name) {
+            Ok(idx) => idx,
+            Err(_) => continue,
+        };
+
+        for entry in &index.entries {
+            results.push(IndexAtom::from_entry(entry, &project_name, prefix_project));
+        }
+    }
+
+    Ok(results)
+}
+
+// ============================================================================
 // delete_atom
 // ============================================================================
 
@@ -679,5 +756,19 @@ mod tests {
             }
             other => panic!("expected storage error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn index_atom_text_line_uses_em_dash_and_parens() {
+        let row = super::IndexAtom {
+            id: "K-000042".to_string(),
+            title: "per-tenant token bucket".to_string(),
+            atom_type: crate::models::AtomType::Decision,
+            confidence: crate::models::Confidence::High,
+        };
+        assert_eq!(
+            row.to_text_line(),
+            "K-000042 — per-tenant token bucket (decision, high)"
+        );
     }
 }

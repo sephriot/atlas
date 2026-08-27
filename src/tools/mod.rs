@@ -5,8 +5,9 @@ mod search;
 mod write;
 
 pub use atoms::{
-    delete_atom, enable_local_storage, get_atom, get_context, list_atoms, list_projects,
+    delete_atom, enable_local_storage, get_atom, get_context, list_atoms, list_index, list_projects,
     DeleteAtomRequest, EnableLocalStorageRequest, GetAtomRequest, ListAtomsRequest,
+    ListIndexRequest,
 };
 pub use link::{link, unlink, LinkRequest};
 pub use search::{search, SearchRequest};

@@ -16,15 +16,16 @@ use crate::telemetry::{
 };
 use crate::tools::{
     create_atom, delete_atom, enable_local_storage, get_atom, get_context, link, list_atoms,
-    list_projects, search, unlink, update_atom, AtomUpdateRequest, AtomWriteRequest,
+    list_index, list_projects, search, unlink, update_atom, AtomUpdateRequest, AtomWriteRequest,
     DeleteAtomRequest, EnableLocalStorageRequest, GetAtomRequest, LinkRequest, ListAtomsRequest,
-    SearchRequest,
+    ListIndexRequest, SearchRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
     Yaml,
     Json,
+    Text,
 }
 
 impl fmt::Display for OutputFormat {
@@ -32,6 +33,7 @@ impl fmt::Display for OutputFormat {
         match self {
             OutputFormat::Yaml => write!(f, "yaml"),
             OutputFormat::Json => write!(f, "json"),
+            OutputFormat::Text => write!(f, "text"),
         }
     }
 }
@@ -106,6 +108,13 @@ pub enum Commands {
         /// Print only full atom IDs, one per line
         #[arg(long)]
         ids: bool,
+    },
+
+    /// List index.yaml entries without reading atom files
+    Index {
+        /// Scope filter: org name or org/project path
+        #[arg(long)]
+        scope: Option<String>,
     },
 
     /// Create a new atom
@@ -362,6 +371,16 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
                 print_lines(results.iter().map(|result| result.id.as_str()));
             } else {
                 print_output(&results, format)?;
+            }
+        }
+        Commands::Index { scope } => {
+            let results = list_index(ListIndexRequest { scope })?;
+            if format == OutputFormat::Json {
+                print_output(&results, format)?;
+            } else {
+                for row in &results {
+                    println!("{}", row.to_text_line());
+                }
             }
         }
         Commands::Create { content } => {
@@ -691,7 +710,7 @@ fn print_output<T: Serialize>(value: &T, format: OutputFormat) -> Result<(), Atl
                 .map_err(|e| AtlasError::Config(format!("JSON serialization error: {}", e)))?;
             println!("{}", output);
         }
-        OutputFormat::Yaml => {
+        OutputFormat::Yaml | OutputFormat::Text => {
             let output = serde_yaml::to_string(value)?;
             print!("{}", output);
         }
@@ -707,6 +726,7 @@ mod tests {
     fn output_format_display_matches_cli_values() {
         assert_eq!(OutputFormat::Yaml.to_string(), "yaml");
         assert_eq!(OutputFormat::Json.to_string(), "json");
+        assert_eq!(OutputFormat::Text.to_string(), "text");
     }
 
     #[test]
