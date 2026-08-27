@@ -794,3 +794,35 @@ fn feedback_accepts_a_result_without_a_search_id() {
     feedback.args(["feedback", "--result", &id, "--verdict", "misleading"]);
     assert_eq!(run_json(feedback)["recorded"], true);
 }
+
+#[test]
+fn telemetry_metrics_accumulate_and_clear_with_the_journal() {
+    let temp = TempDir::new("telemetry-metrics");
+    let id = note(temp.path(), "atlas", "Telemetry metric result");
+
+    let mut search = atlas(temp.path());
+    search.args(["search", "telemetry"]);
+    run_json(search);
+
+    let mut get = atlas(temp.path());
+    get.args(["get", &id]);
+    run_json(get);
+
+    let mut feedback = atlas(temp.path());
+    feedback.args(["feedback", "--result", &id, "--verdict", "helpful"]);
+    run_json(feedback);
+
+    let mut metrics = atlas(temp.path());
+    metrics.args(["telemetry", "metrics"]);
+    let metrics = run_json(metrics);
+    assert_eq!(metrics["all_time"]["searches"], 1);
+    assert_eq!(metrics["all_time"]["results_matched"], 1);
+    assert_eq!(metrics["all_time"]["gets"], 1);
+    assert_eq!(metrics["all_time"]["helpful_feedback"], 1);
+
+    let mut clear = atlas(temp.path());
+    clear.args(["telemetry", "clear"]);
+    run_json(clear);
+    assert!(!temp.path().join("telemetry/events.jsonl").exists());
+    assert!(!temp.path().join("telemetry/metrics.yaml").exists());
+}

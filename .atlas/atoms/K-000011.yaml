@@ -1,0 +1,15 @@
+id: K-000011
+title: Telemetry keeps bounded detail and aggregate metrics
+type: decision
+confidence: high
+summary: Atlas retains 10 MiB of recent events, 90 daily metric buckets, and all-time redacted counters.
+tags:
+- telemetry
+- retention
+- metrics
+sources:
+- src/telemetry.rs
+- src/cli.rs
+links:
+- K-000010
+updated_at: 2026-08-27

@@ -10,4 +10,6 @@ tags:
 sources:
 - src/telemetry.rs
 - src/cli.rs
+links:
+- K-000011
 updated_at: 2026-08-27

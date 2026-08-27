@@ -219,17 +219,20 @@ This creates:
 
 Atlas records local telemetry by default under `~/.atlas/telemetry/`. It never sends this data to a remote service. When `--storage` or `ATLAS_STORAGE` is set, telemetry uses that storage root instead.
 
-Events record search result counts and IDs, atom IDs read with `get`, and explicit feedback. They do not record raw search text, atom contents, source paths, or stdin input. A feedback note is stored only when the caller supplies one.
+Atlas keeps detailed events in `events.jsonl` up to 10 MiB. It also updates privacy-safe counters in `metrics.yaml`: all-time totals and daily buckets for the last 90 days. Counters include searches, zero-result searches, total matches, reads, and feedback verdicts. Events record search result counts and IDs, atom IDs read with `get`, and explicit feedback. They do not record raw search text, atom contents, source paths, or stdin input. A feedback note is stored only when the caller supplies one.
 
 ```bash
 # Check the current state and journal location
 atlas telemetry status
 
+# Read all-time and daily aggregate metrics
+atlas telemetry metrics
+
 # These commands are idempotent
 atlas telemetry enable
 atlas telemetry disable
 
-# Remove the local event journal
+# Remove all local telemetry data
 atlas telemetry clear
 
 # Record feedback using the search_id returned by `atlas search`

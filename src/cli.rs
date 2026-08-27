@@ -10,8 +10,9 @@ use crate::context::{detect_context_full, require_explicit_write_context};
 use crate::error::AtlasError;
 use crate::models::{AtomType, Confidence};
 use crate::telemetry::{
-    clear as clear_telemetry, record_feedback, record_get, record_search,
-    set_enabled as set_telemetry_enabled, status as telemetry_status, FeedbackVerdict,
+    clear as clear_telemetry, metrics as telemetry_metrics, record_feedback, record_get,
+    record_search, set_enabled as set_telemetry_enabled, status as telemetry_status,
+    FeedbackVerdict,
 };
 use crate::tools::{
     create_atom, delete_atom, enable_local_storage, get_atom, get_context, link, list_atoms,
@@ -195,6 +196,8 @@ pub enum Commands {
 pub enum TelemetryCommands {
     /// Show telemetry state and journal path
     Status,
+    /// Show aggregate telemetry metrics
+    Metrics,
     /// Enable local telemetry collection
     Enable,
     /// Disable local telemetry collection
@@ -407,18 +410,15 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
             })?;
             print_output(&result, format)?;
         }
-        Commands::Telemetry { command } => {
-            let result = match command {
-                TelemetryCommands::Status => telemetry_status()?,
-                TelemetryCommands::Enable => set_telemetry_enabled(true)?,
-                TelemetryCommands::Disable => set_telemetry_enabled(false)?,
-                TelemetryCommands::Clear => {
-                    print_output(&clear_telemetry()?, format)?;
-                    return Ok(());
-                }
-            };
-            print_output(&result, format)?;
-        }
+        Commands::Telemetry { command } => match command {
+            TelemetryCommands::Status => print_output(&telemetry_status()?, format)?,
+            TelemetryCommands::Metrics => print_output(&telemetry_metrics()?, format)?,
+            TelemetryCommands::Enable => print_output(&set_telemetry_enabled(true)?, format)?,
+            TelemetryCommands::Disable => print_output(&set_telemetry_enabled(false)?, format)?,
+            TelemetryCommands::Clear => {
+                print_output(&clear_telemetry()?, format)?;
+            }
+        },
         Commands::Feedback {
             search_id,
             result,
