@@ -20,6 +20,9 @@ import sys
 
 FQ = re.compile(r"^[^/]+/[^/]+/(K-\d+)$")
 BARE = re.compile(r"^K-\d+$")
+CROSS_BRACKET = re.compile(r"^\[repo (?:[\w.-]+/)?([\w.-]+)\]\s*(\S+)")
+CROSS_PREFIX = re.compile(r"^([\w.-]+):(\S+\.\w+)$")
+SIBLING_ROOTS = {}
 
 
 def atlas(*args):
@@ -57,7 +60,11 @@ def load_atoms(ids):
     proc = subprocess.run(("atlas", "get", "-", "--format", "json"),
                           input="\n".join(ids), capture_output=True, text=True)
     if proc.returncode == 0:
-        return dict(zip(ids, json.loads(proc.stdout))), []
+        batch = json.loads(proc.stdout)
+        # A one-ID batch comes back as the atom itself, not a list of one.
+        if isinstance(batch, dict):
+            batch = [batch]
+        return dict(zip(ids, batch)), []
     atoms, missing = {}, []
     for atom_id in ids:
         one = subprocess.run(("atlas", "get", atom_id, "--format", "json"),
@@ -76,14 +83,85 @@ def sibling_scopes(org, exclude):
                   and "%s/%s" % (p["org"], p["project"]) != exclude)
 
 
-def classify_source(source, root):
+def resolve(*candidates):
+    """Return the first candidate present on disk, else the first, which is reported."""
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[0]
+
+
+def bare_path(source):
+    """Drop a trailing prose qualifier such as a symbol name or a parenthesised note."""
+    return source.split(" ")[0]
+
+
+def cross_repo(source, org):
+    """Split a citation naming another repository into (repo, path), or None."""
+    bracket = CROSS_BRACKET.match(source)
+    if bracket:
+        return bracket.group(1), bracket.group(2)
+    if source.startswith(org + "/") and source.count("/") >= 2:
+        return tuple(source[len(org) + 1:].split("/", 1))
+    prefixed = CROSS_PREFIX.match(source)
+    if prefixed:
+        return prefixed.group(1), prefixed.group(2)
+    return None
+
+
+def nested_checkout(parent, repo):
+    """Find repo one directory below parent, accepting only a git checkout."""
+    try:
+        entries = sorted(os.listdir(parent))
+    except OSError:
+        return None
+    for entry in entries:
+        candidate = os.path.join(parent, entry, repo)
+        if os.path.exists(os.path.join(candidate, ".git")):
+            return candidate
+    return None
+
+
+def sibling_root(root, repo):
+    """Find a sibling checkout by directory name, or None if it is not cloned here."""
+    if repo not in SIBLING_ROOTS:
+        found, current = None, root
+        # Sibling checkouts sit near the audited repo at a depth the store cannot know,
+        # and a grouping repository such as a superproject holds its own a level deeper.
+        for _ in range(4):
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            found = (os.path.join(parent, repo) if os.path.isdir(os.path.join(parent, repo))
+                     else nested_checkout(parent, repo))
+            if found:
+                break
+            current = parent
+        SIBLING_ROOTS[repo] = found
+    return SIBLING_ROOTS[repo]
+
+
+def classify_source(source, root, org):
     """Return (kind, resolved_path). Only 'file' entries are checked on disk."""
     if source.startswith(("http://", "https://", "git@")):
         return "external", None
+    elsewhere = cross_repo(source, org)
+    if elsewhere:
+        repo, relative = elsewhere
+        base = sibling_root(root, repo)
+        # Without that checkout the citation can be neither confirmed nor called dead.
+        if base is None:
+            return "unchecked", source
+        return "file", resolve(os.path.join(base, relative),
+                              os.path.join(base, bare_path(relative)))
+    if source.startswith("~"):
+        return "file", resolve(os.path.expanduser(source),
+                               os.path.expanduser(bare_path(source)))
     if os.path.isabs(source):
-        return "file", source
+        return "file", resolve(source, bare_path(source))
     if "/" in source or "." in source:
-        return "file", os.path.join(root, source)
+        return "file", resolve(os.path.join(root, source),
+                               os.path.join(root, bare_path(source)))
     return "freeform", None
 
 
@@ -151,13 +229,15 @@ def main():
 
     report = []
     for atom_id, atom in atoms.items():
-        dead, external, freeform = [], [], []
+        dead, external, freeform, unchecked = [], [], [], []
         for source in atom.get("sources", []):
-            kind, path = classify_source(source, root)
+            kind, path = classify_source(source, root, org)
             if kind == "external":
                 external.append(source)
             elif kind == "freeform":
                 freeform.append(source)
+            elif kind == "unchecked":
+                unchecked.append(source)
             elif not os.path.exists(path):
                 dead.append(source)
 
@@ -184,7 +264,7 @@ def main():
                 asymmetric.append({"peer": peer, "held_by": "the peer only",
                                    "cross_project": project_of(peer) != scope})
 
-        total = len([s for s in atom.get("sources", []) if classify_source(s, root)[0] == "file"])
+        total = len([s for s in atom.get("sources", []) if classify_source(s, root, org)[0] == "file"])
         report.append({
             "id": atom_id,
             "title": atom["title"],
@@ -194,6 +274,7 @@ def main():
             "dead_sources": dead,
             "external_sources": external,
             "freeform_sources": freeform,
+            "unchecked_sources": unchecked,
             "dangling_links": dangling,
             "inbound_links": edges_in,
             "outbound_links": edges_out,
@@ -250,6 +331,12 @@ def main():
                                                   ", ".join(r["dead_sources"])))
         if r["dangling_links"]:
             print("    dangling links: %s" % ", ".join(r["dangling_links"]))
+
+    offsite = [r for r in report if r["unchecked_sources"]]
+    print("\n== sources in a repository not cloned here, unjudged: %d ==" % len(offsite))
+    for r in offsite:
+        print("%s  %s" % (r["id"], r["title"]))
+        print("    %s" % ", ".join(r["unchecked_sources"]))
 
     sourceless = [r for r in report if r["sourceless"]]
     print("\n== atoms with no checkable source: %d ==" % len(sourceless))

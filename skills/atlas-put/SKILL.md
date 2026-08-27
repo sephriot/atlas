@@ -7,6 +7,10 @@ description: "Record new knowledge to Atlas long-term memory. Use after completi
 
 Capture reusable learnings in Atlas.
 
+Never hand-edit the store. Create, update, link, and delete through the CLI, including a
+one-word typo fix: the files carry identity and index state that a direct edit corrupts
+silently.
+
 ## When Recording Is Required
 
 Record when any of these is true:
@@ -14,6 +18,7 @@ Record when any of these is true:
 1. A bug fix, feature, or refactor was completed.
 2. A new gotcha or reusable pattern was discovered.
 3. A meaningful technical decision was made.
+4. An alternative approach was raised and left without a verdict. Record it as a `decision` whose title opens with `Open:` and whose details name who raised it and what would settle it. A verdict that lives only in a thread or a task list dies with the session; the next `atlas-get` is the only place a later session reliably looks.
 
 Otherwise, a concrete skip reason in the final response is enough. Report the resulting atom ID, or that skip reason, under the `Atlas` response artifact either way.
 
@@ -67,6 +72,15 @@ that list is a question, not a receipt. Keep the edges that still explain someth
 `atlas unlink` the rest, in the same pass as the rewrite rather than leaving it for a
 future audit.
 
+## Correcting Retrieved Atoms
+
+Correct an atom proactively when retrieval feedback and authoritative evidence show that it is misleading or stale. Do not wait for a separate curation task.
+
+1. Submit the matching `atlas feedback` event first. Include the search ID and a short, non-sensitive note when available; feedback records the retrieval problem but does not alter the atom.
+2. Read the full atom with `atlas get <id> --format json`. Feedback alone is not evidence for a correction.
+3. Update only the fields the authoritative evidence changes. Preserve existing tags, sources, and links unless the correction requires changing them.
+4. Read the atom again, confirm its revised claim and sources, and reassess every reported edge. Use `atlas unlink` for edges that no longer explain the atom.
+
 ## Linking
 
 Pass `--link` on `create` and the atom arrives with its edges. That is the point:
@@ -93,7 +107,7 @@ holds:
 Name a cross-project target by its project: `--link backend/K-000031`, or
 `atlas link K-000012 backend/K-000031`. A bare ID always means the current project.
 
-Prefer a few load-bearing edges. Linking everything that shares a tag is traversal noise.
+Prefer a few useful edges. Linking everything that shares a tag is traversal noise.
 
 ## Stdin and Pipe Preference
 
@@ -202,6 +216,7 @@ Only record if knowledge is:
 - **Non-obvious** - Not easily discoverable from code/docs
 - **Stable** - Unlikely to change frequently
 - **Actionable** - Helps make decisions or avoid mistakes
+- **Source-backed** - A claim about a pre-existing system, event, provenance, or reachability identifies its supporting source. A constructed test proves code behavior for its input, not that the input existed in production. Record an unsupported claim as a conditional hypothesis and name the evidence still needed.
 
 ## Anti-Patterns
 

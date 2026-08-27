@@ -50,12 +50,18 @@ python3 "$SKILL_DIR/scripts/atlas_audit.py" --scope <org>/<project> --root <repo
 
 Read-only. It resolves every atom's sources against the filesystem and every link
 against the atoms that exist, then reports: atoms with dead sources or dangling
-links, atoms with no checkable source, edges only one atom holds, atoms with no
-edges at all, duplicate candidates, and unlinked atoms that share ground with a
-sibling project. IDs the index lists but cannot be read are reported first.
+links, sources in a repository not cloned here, atoms with no checkable source,
+edges only one atom holds, atoms with no edges at all, duplicate candidates, and
+unlinked atoms that share ground with a sibling project. IDs the index lists but
+cannot be read are reported first.
 
 It reads every project in the org, since an edge is only half visible from one
 side. `--skip-org-scan` drops that, and with it every cross-project finding.
+
+A source naming another repository — `[repo <org>/<repo>] <path>`, `<org>/<repo>/<path>`,
+or `<repo>:<path>` — is resolved against that checkout, found by name near the audited
+root. When the repository is not cloned locally the source is reported as unjudged
+rather than dead, because absence of a checkout is not evidence about the citation.
 
 A dead source path is mechanical evidence that the atom describes a world that no
 longer exists. It is the one signal here that needs no interpretation — start there,

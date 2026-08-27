@@ -30,6 +30,19 @@ This prevents searching/recording in the wrong project (e.g., `global/tmp`).
 4. **Follow their links** — edges are mutual, so a relevant atom names its neighbours whichever side recorded them, and a `<project>/K-NNNNNN` link leads into a sibling repository
 5. **Cite atoms** in your response using `[K-XXXXXX]` format
 
+## Retrieval Feedback
+
+When a returned atom is demonstrably misleading or stale, record feedback before relying on a correction. Do not rate a result only because you prefer a different answer.
+
+1. Keep the `search_id` from a normal `atlas search` response when it is available. Searches run with `--ids` have no search ID.
+2. Use `misleading` when the result is wrong or does not apply to the task. Use `stale` when the atom was once correct but authoritative evidence shows that it is outdated.
+3. Submit concise, non-sensitive, source-backed feedback. The search ID is optional:
+   ```bash
+   atlas feedback S-123 --result K-000012 --verdict stale --note "Current source shows the command changed."
+   atlas feedback --result K-000012 --verdict misleading
+   ```
+4. Feedback does not change the atom. When authoritative evidence establishes the correction, proactively refine the atom through the `atlas-put` correction workflow; do not wait for a separate curation task.
+
 ## CLI Commands
 
 **Broad discovery**, across the org with local hits first:
