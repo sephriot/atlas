@@ -659,3 +659,138 @@ fn delete_detaches_every_atom_that_referenced_it() {
     assert_eq!(links_of(temp.path(), &neighbour), serde_json::json!([]));
     assert_eq!(links_of(temp.path(), &elsewhere), serde_json::json!([]));
 }
+
+#[test]
+fn telemetry_is_enabled_by_default_and_configuration_is_idempotent() {
+    let temp = TempDir::new("telemetry-configuration");
+
+    let mut status = atlas(temp.path());
+    status.args(["telemetry", "status"]);
+    let status = run_json(status);
+    assert_eq!(status["enabled"], true);
+    assert_eq!(
+        status["events_path"],
+        temp.path().join("telemetry/events.jsonl").to_str().unwrap()
+    );
+
+    for _ in 0..2 {
+        let mut disable = atlas(temp.path());
+        disable.args(["telemetry", "disable"]);
+        assert_eq!(run_json(disable)["enabled"], false);
+    }
+
+    for _ in 0..2 {
+        let mut enable = atlas(temp.path());
+        enable.args(["telemetry", "enable"]);
+        assert_eq!(run_json(enable)["enabled"], true);
+    }
+}
+
+#[test]
+fn search_and_feedback_create_redacted_local_events() {
+    let temp = TempDir::new("telemetry-feedback");
+    let id = note(temp.path(), "atlas", "Telemetry result");
+
+    let mut search = atlas(temp.path());
+    search.args(["search", "private search phrase"]);
+    let search = run_json(search);
+    let search_id = search["search_id"]
+        .as_str()
+        .expect("search should expose a correlation ID");
+
+    let mut feedback = atlas(temp.path());
+    feedback.args([
+        "feedback",
+        search_id,
+        "--result",
+        &id,
+        "--verdict",
+        "helpful",
+    ]);
+    assert_eq!(run_json(feedback)["recorded"], true);
+
+    let events = std::fs::read_to_string(temp.path().join("telemetry/events.jsonl"))
+        .expect("telemetry journal should exist");
+    assert!(events.contains("search"));
+    assert!(events.contains("feedback"));
+    assert!(events.contains(search_id));
+    assert!(events.contains(&id));
+    assert!(!events.contains("private search phrase"));
+}
+
+#[test]
+fn get_records_the_atom_reference_without_its_contents() {
+    let temp = TempDir::new("telemetry-get");
+    let id = note(temp.path(), "atlas", "Sensitive title");
+
+    let mut get = atlas(temp.path());
+    get.args(["get", &id]);
+    run_json(get);
+
+    let events = std::fs::read_to_string(temp.path().join("telemetry/events.jsonl"))
+        .expect("telemetry journal should exist");
+    assert!(events.contains("get"));
+    assert!(events.contains(&id));
+    assert!(!events.contains("Sensitive title"));
+}
+
+#[test]
+fn telemetry_clear_removes_the_local_journal() {
+    let temp = TempDir::new("telemetry-clear");
+    note(temp.path(), "atlas", "A searchable atom");
+
+    let mut search = atlas(temp.path());
+    search.args(["search", "searchable"]);
+    run_json(search);
+    assert!(temp.path().join("telemetry/events.jsonl").exists());
+
+    let mut clear = atlas(temp.path());
+    clear.args(["telemetry", "clear"]);
+    assert_eq!(run_json(clear)["cleared"], true);
+    assert!(!temp.path().join("telemetry/events.jsonl").exists());
+
+    let mut clear_again = atlas(temp.path());
+    clear_again.args(["telemetry", "clear"]);
+    assert_eq!(run_json(clear_again)["cleared"], false);
+}
+
+#[test]
+fn disabled_telemetry_does_not_record_retrieval_or_feedback() {
+    let temp = TempDir::new("telemetry-disabled");
+    let id = note(temp.path(), "atlas", "Searchable atom");
+
+    let mut disable = atlas(temp.path());
+    disable.args(["telemetry", "disable"]);
+    run_json(disable);
+
+    let mut search = atlas(temp.path());
+    search.args(["search", "searchable"]);
+    let search = run_json(search);
+    assert!(search.get("search_id").is_none());
+
+    let mut get = atlas(temp.path());
+    get.args(["get", &id]);
+    run_json(get);
+
+    let mut feedback = atlas(temp.path());
+    feedback.args([
+        "feedback",
+        "S-local",
+        "--result",
+        &id,
+        "--verdict",
+        "helpful",
+    ]);
+    assert_eq!(run_json(feedback)["recorded"], false);
+    assert!(!temp.path().join("telemetry/events.jsonl").exists());
+}
+
+#[test]
+fn feedback_accepts_a_result_without_a_search_id() {
+    let temp = TempDir::new("telemetry-feedback-without-search");
+    let id = note(temp.path(), "atlas", "Feedback target");
+
+    let mut feedback = atlas(temp.path());
+    feedback.args(["feedback", "--result", &id, "--verdict", "misleading"]);
+    assert_eq!(run_json(feedback)["recorded"], true);
+}

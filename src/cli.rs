@@ -9,6 +9,10 @@ use crate::client_context::ClientContext;
 use crate::context::{detect_context_full, require_explicit_write_context};
 use crate::error::AtlasError;
 use crate::models::{AtomType, Confidence};
+use crate::telemetry::{
+    clear as clear_telemetry, record_feedback, record_get, record_search,
+    set_enabled as set_telemetry_enabled, status as telemetry_status, FeedbackVerdict,
+};
 use crate::tools::{
     create_atom, delete_atom, enable_local_storage, get_atom, get_context, link, list_atoms,
     list_projects, search, unlink, update_atom, AtomUpdateRequest, AtomWriteRequest,
@@ -161,6 +165,42 @@ pub enum Commands {
         #[arg(long)]
         root: Option<PathBuf>,
     },
+
+    /// Manage local telemetry collection
+    Telemetry {
+        #[command(subcommand)]
+        command: TelemetryCommands,
+    },
+
+    /// Record feedback about a search result
+    Feedback {
+        /// Optional correlation ID returned by search
+        search_id: Option<String>,
+
+        /// Atom result that the feedback refers to
+        #[arg(long)]
+        result: Option<String>,
+
+        /// Caller assessment of the retrieval
+        #[arg(long)]
+        verdict: FeedbackVerdict,
+
+        /// Optional local note about the assessment
+        #[arg(long)]
+        note: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TelemetryCommands {
+    /// Show telemetry state and journal path
+    Status,
+    /// Enable local telemetry collection
+    Enable,
+    /// Disable local telemetry collection
+    Disable,
+    /// Remove the local telemetry journal
+    Clear,
 }
 
 #[derive(Args, Debug)]
@@ -264,7 +304,17 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
                 page_size: Some(page_size),
                 scope,
             };
-            let results = search(req)?;
+            let mut results = search(req)?;
+            results.search_id = record_search(
+                results.total,
+                &results
+                    .results
+                    .iter()
+                    .map(|result| result.id.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .ok()
+            .flatten();
             if ids {
                 print_lines(results.results.iter().map(|result| result.id.as_str()));
             } else {
@@ -275,11 +325,16 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
             let ids = resolve_ids(ids)?;
             if ids.len() == 1 {
                 let atom = get_atom(GetAtomRequest { id: ids[0].clone() })?;
+                let _ = record_get(&ids[0]);
                 print_output(&atom, format)?;
             } else {
                 let atoms = ids
                     .into_iter()
-                    .map(|id| get_atom(GetAtomRequest { id }))
+                    .map(|id| {
+                        let atom = get_atom(GetAtomRequest { id: id.clone() })?;
+                        let _ = record_get(&id);
+                        Ok::<_, AtlasError>(atom)
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 print_output(&atoms, format)?;
             }
@@ -351,6 +406,32 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
                 root,
             })?;
             print_output(&result, format)?;
+        }
+        Commands::Telemetry { command } => {
+            let result = match command {
+                TelemetryCommands::Status => telemetry_status()?,
+                TelemetryCommands::Enable => set_telemetry_enabled(true)?,
+                TelemetryCommands::Disable => set_telemetry_enabled(false)?,
+                TelemetryCommands::Clear => {
+                    print_output(&clear_telemetry()?, format)?;
+                    return Ok(());
+                }
+            };
+            print_output(&result, format)?;
+        }
+        Commands::Feedback {
+            search_id,
+            result,
+            verdict,
+            note,
+        } => {
+            let feedback = record_feedback(
+                search_id.as_deref(),
+                result.as_deref(),
+                verdict,
+                note.as_deref(),
+            )?;
+            print_output(&feedback, format)?;
         }
     }
     Ok(())

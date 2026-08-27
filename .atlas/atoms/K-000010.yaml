@@ -1,0 +1,13 @@
+id: K-000010
+title: Local telemetry is enabled by default
+type: decision
+confidence: high
+summary: Atlas records redacted retrieval events locally and accepts caller feedback without a remote service.
+tags:
+- telemetry
+- privacy
+- feedback
+sources:
+- src/telemetry.rs
+- src/cli.rs
+updated_at: 2026-08-27

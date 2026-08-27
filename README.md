@@ -94,6 +94,8 @@ cat notes.md | atlas create \
 | `context` | Show detected org/project context |
 | `instructions` | Print agent instructions for using Atlas |
 | `enable-local` | Use repo-local `.atlas/` storage for a project |
+| `telemetry` | Manage local telemetry collection |
+| `feedback` | Record caller feedback about a search result |
 
 Updates are explicit: use `atlas update <atom-id> ...`. Atlas does not match
 atoms by title because titles are mutable metadata, not stable identity.
@@ -211,6 +213,30 @@ This creates:
     └── K-XXXXXX.yaml
 
 ~/.atlas/orgs/{org}/{project} -> {repo}/.atlas/
+```
+
+## Telemetry
+
+Atlas records local telemetry by default under `~/.atlas/telemetry/`. It never sends this data to a remote service. When `--storage` or `ATLAS_STORAGE` is set, telemetry uses that storage root instead.
+
+Events record search result counts and IDs, atom IDs read with `get`, and explicit feedback. They do not record raw search text, atom contents, source paths, or stdin input. A feedback note is stored only when the caller supplies one.
+
+```bash
+# Check the current state and journal location
+atlas telemetry status
+
+# These commands are idempotent
+atlas telemetry enable
+atlas telemetry disable
+
+# Remove the local event journal
+atlas telemetry clear
+
+# Record feedback using the search_id returned by `atlas search`
+atlas feedback S-123 --result sephriot/atlas/K-000001 --verdict helpful
+
+# `--ids` searches do not return a search_id, so feedback may refer to an atom alone
+atlas feedback --result sephriot/atlas/K-000001 --verdict misleading
 ```
 
 ## Environment Variables

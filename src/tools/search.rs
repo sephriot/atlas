@@ -91,6 +91,8 @@ pub struct SearchResponse {
     pub page_size: usize,
     /// Total number of pages
     pub total_pages: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_id: Option<String>,
 }
 
 /// Search atoms in the index.
@@ -233,6 +235,7 @@ pub fn search(req: SearchRequest) -> Result<SearchResponse, AtlasError> {
         page,
         page_size,
         total_pages,
+        search_id: None,
     })
 }
 
@@ -467,6 +470,7 @@ mod tests {
             page: 2,
             page_size: 10,
             total_pages: 5,
+            search_id: None,
         };
         assert_eq!(response.total, 42);
         assert_eq!(response.page, 2);
@@ -484,6 +488,7 @@ mod tests {
             page: 1,
             page_size: 20,
             total_pages: 1,
+            search_id: None,
         };
         assert_eq!(response.results.len(), 1);
         assert_eq!(response.results[0].title, "Test");

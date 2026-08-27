@@ -6,6 +6,7 @@ mod error;
 mod locking;
 mod models;
 mod storage;
+mod telemetry;
 mod tools;
 
 use clap::Parser;
