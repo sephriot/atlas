@@ -10,9 +10,9 @@ use crate::context::{detect_context_full, require_explicit_write_context};
 use crate::error::AtlasError;
 use crate::models::{AtomType, Confidence};
 use crate::telemetry::{
-    clear as clear_telemetry, metrics as telemetry_metrics, record_feedback, record_get,
-    record_search, set_enabled as set_telemetry_enabled, status as telemetry_status,
-    FeedbackVerdict,
+    clear as clear_telemetry, metrics as telemetry_metrics, record_command, record_feedback,
+    record_get, record_hook, record_search, sanitize_label, set_enabled as set_telemetry_enabled,
+    status as telemetry_status, FeedbackVerdict, HookOutcome, HookSkipReason,
 };
 use crate::tools::{
     create_atom, delete_atom, enable_local_storage, get_atom, get_context, link, list_atoms,
@@ -213,6 +213,19 @@ pub enum TelemetryCommands {
     Disable,
     /// Remove the local telemetry journal
     Clear,
+    /// Record a hook lifecycle event
+    Hook {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        event: String,
+        #[arg(long)]
+        outcome: HookOutcome,
+        #[arg(long)]
+        reason: Option<HookSkipReason>,
+        #[arg(long, default_value_t = 0)]
+        injected_lines: usize,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -295,6 +308,39 @@ pub enum ClearField {
 
 /// Run a CLI command and print output.
 pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
+    Ok(run_logged(cmd, format)?)
+}
+
+fn run_logged(cmd: Commands, format: OutputFormat) -> Result<(), AtlasError> {
+    if matches!(cmd, Commands::Telemetry { .. }) {
+        return execute(cmd, format);
+    }
+    let command = command_name(&cmd);
+    let started = std::time::Instant::now();
+    let result = execute(cmd, format);
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let source = std::env::var("ATLAS_TELEMETRY_SOURCE")
+        .ok()
+        .and_then(|v| sanitize_label(&v));
+    let hook_event = std::env::var("ATLAS_TELEMETRY_HOOK_EVENT")
+        .ok()
+        .and_then(|v| sanitize_label(&v));
+    let (ok, error_kind) = match &result {
+        Ok(()) => (true, None),
+        Err(err) => (false, Some(error_kind_name(err))),
+    };
+    let _ = record_command(
+        command,
+        ok,
+        duration_ms,
+        error_kind,
+        source.as_deref(),
+        hook_event.as_deref(),
+    );
+    result
+}
+
+fn execute(cmd: Commands, format: OutputFormat) -> Result<(), AtlasError> {
     match cmd {
         Commands::Search {
             query,
@@ -436,6 +482,22 @@ pub fn run(cmd: Commands, format: OutputFormat) -> anyhow::Result<()> {
             TelemetryCommands::Disable => print_output(&set_telemetry_enabled(false)?, format)?,
             TelemetryCommands::Clear => {
                 print_output(&clear_telemetry()?, format)?;
+            }
+            TelemetryCommands::Hook {
+                name,
+                event,
+                outcome,
+                reason,
+                injected_lines,
+            } => {
+                if sanitize_label(&name).is_none() || sanitize_label(&event).is_none() {
+                    return Err(AtlasError::Validation(
+                        "telemetry hook name and event must match [A-Za-z0-9:._-] and be at most 64 characters."
+                            .to_string(),
+                    ));
+                }
+                let recorded = record_hook(&name, &event, outcome, reason, injected_lines)?;
+                print_output(&recorded, format)?;
             }
         },
         Commands::Feedback {
@@ -699,6 +761,38 @@ fn read_stdin() -> Result<String, AtlasError> {
 fn print_lines<'a>(lines: impl Iterator<Item = &'a str>) {
     for line in lines {
         println!("{}", line);
+    }
+}
+
+fn command_name(cmd: &Commands) -> &'static str {
+    match cmd {
+        Commands::Search { .. } => "search",
+        Commands::Get { .. } => "get",
+        Commands::Atoms { .. } => "atoms",
+        Commands::Index { .. } => "index",
+        Commands::Create { .. } => "create",
+        Commands::Update { .. } => "update",
+        Commands::Delete { .. } => "delete",
+        Commands::Link { .. } => "link",
+        Commands::Unlink { .. } => "unlink",
+        Commands::Projects => "projects",
+        Commands::Context => "context",
+        Commands::Instructions { .. } => "instructions",
+        Commands::EnableLocal { .. } => "enable-local",
+        Commands::Telemetry { .. } => "telemetry",
+        Commands::Feedback { .. } => "feedback",
+    }
+}
+
+fn error_kind_name(err: &AtlasError) -> &'static str {
+    match err {
+        AtlasError::Io(_) => "io",
+        AtlasError::Yaml(_) => "yaml",
+        AtlasError::Config(_) => "config",
+        AtlasError::Context(_) => "context",
+        AtlasError::Storage(_) => "storage",
+        AtlasError::NotFound(_) => "not_found",
+        AtlasError::Validation(_) => "validation",
     }
 }
 

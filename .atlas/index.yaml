@@ -1,4 +1,4 @@
-next_id: 12
+next_id: 13
 entries:
 - id: K-000001
   title: Atlas is now a CLI-only memory manager
@@ -145,6 +145,7 @@ entries:
   - src/cli.rs
   links:
   - K-000011
+  - K-000012
 - id: K-000011
   title: Telemetry keeps bounded detail and aggregate metrics
   type: decision
@@ -158,3 +159,20 @@ entries:
   - src/cli.rs
   links:
   - K-000010
+  - K-000012
+- id: K-000012
+  title: Every CLI command except telemetry subcommands is journaled
+  type: decision
+  confidence: high
+  tags:
+  - telemetry
+  - cli
+  - privacy
+  sources:
+  - src/cli.rs
+  - src/telemetry.rs
+  - tests/cli_write.rs
+  links:
+  - K-000010
+  - K-000011
+  - ai/K-000082

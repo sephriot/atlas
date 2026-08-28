@@ -103,6 +103,17 @@ fn run_json(mut cmd: Command) -> Value {
     serde_json::from_slice(&output.stdout).expect("stdout should be JSON")
 }
 
+fn run_failing(mut cmd: Command) -> Output {
+    let output = cmd.output().expect("command should run");
+    assert!(
+        !output.status.success(),
+        "command should fail\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
 fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
@@ -757,11 +768,12 @@ fn telemetry_clear_removes_the_local_journal() {
 #[test]
 fn disabled_telemetry_does_not_record_retrieval_or_feedback() {
     let temp = TempDir::new("telemetry-disabled");
-    let id = note(temp.path(), "atlas", "Searchable atom");
 
     let mut disable = atlas(temp.path());
     disable.args(["telemetry", "disable"]);
     run_json(disable);
+
+    let id = note(temp.path(), "atlas", "Searchable atom");
 
     let mut search = atlas(temp.path());
     search.args(["search", "searchable"]);
@@ -825,4 +837,155 @@ fn telemetry_metrics_accumulate_and_clear_with_the_journal() {
     run_json(clear);
     assert!(!temp.path().join("telemetry/events.jsonl").exists());
     assert!(!temp.path().join("telemetry/metrics.yaml").exists());
+}
+
+#[test]
+fn index_and_context_record_command_events() {
+    let temp = TempDir::new("telemetry-command-index-context");
+    note(temp.path(), "atlas", "Indexable atom");
+
+    let mut index = atlas(temp.path());
+    index.args(["index"]);
+    run_json(index);
+
+    let mut context = atlas(temp.path());
+    context.args(["context"]);
+    run_json(context);
+
+    let events = std::fs::read_to_string(temp.path().join("telemetry/events.jsonl"))
+        .expect("telemetry journal should exist");
+    assert!(events.contains(r#""kind":"command""#));
+    assert!(events.contains(r#""command":"index""#));
+    assert!(events.contains(r#""command":"context""#));
+    assert!(events.contains(r#""ok":true"#));
+
+    let mut metrics = atlas(temp.path());
+    metrics.args(["telemetry", "metrics"]);
+    let metrics = run_json(metrics);
+    assert_eq!(metrics["all_time"]["commands"]["index"], 1);
+    assert_eq!(metrics["all_time"]["commands"]["context"], 1);
+}
+
+#[test]
+fn failed_command_records_error_kind_without_message() {
+    let temp = TempDir::new("telemetry-command-error");
+    note(temp.path(), "atlas", "Existing atom");
+
+    let mut get = atlas(temp.path());
+    get.args(["get", "K-999999"]);
+    run_failing(get);
+
+    let events = std::fs::read_to_string(temp.path().join("telemetry/events.jsonl"))
+        .expect("telemetry journal should exist");
+    assert!(events.contains(r#""ok":false"#));
+    assert!(events.contains(r#""error_kind":"not_found""#));
+    assert!(!events.contains("Not found:"));
+    assert!(!events.contains("IO error"));
+
+    let mut metrics = atlas(temp.path());
+    metrics.args(["telemetry", "metrics"]);
+    let metrics = run_json(metrics);
+    assert_eq!(metrics["all_time"]["command_errors"], 1);
+}
+
+#[test]
+fn command_event_includes_sanitized_source() {
+    let temp = TempDir::new("telemetry-command-source");
+
+    let mut context = atlas(temp.path());
+    context.env("ATLAS_TELEMETRY_SOURCE", "hook:atlas-index");
+    context.env("ATLAS_TELEMETRY_HOOK_EVENT", "SessionStart");
+    context.args(["context"]);
+    run_json(context);
+
+    let mut context_invalid = atlas(temp.path());
+    context_invalid.env("ATLAS_TELEMETRY_SOURCE", "bad source");
+    context_invalid.args(["context"]);
+    run_json(context_invalid);
+
+    let events = std::fs::read_to_string(temp.path().join("telemetry/events.jsonl"))
+        .expect("telemetry journal should exist");
+    assert!(events.contains(r#""source":"hook:atlas-index""#));
+    assert!(events.contains(r#""hook_event":"SessionStart""#));
+    assert!(!events.contains("bad source"));
+    assert_eq!(
+        events.matches(r#""command":"context""#).count(),
+        2,
+        "both context invocations should record a command event"
+    );
+}
+
+#[test]
+fn telemetry_subcommands_do_not_write_command_events() {
+    let temp = TempDir::new("telemetry-no-self-observe");
+
+    let mut status = atlas(temp.path());
+    status.args(["telemetry", "status"]);
+    run_json(status);
+    assert!(!temp.path().join("telemetry/events.jsonl").exists());
+
+    let mut search = atlas(temp.path());
+    search.args(["search", "anything"]);
+    run_json(search);
+    assert!(temp.path().join("telemetry/events.jsonl").exists());
+
+    let mut clear = atlas(temp.path());
+    clear.args(["telemetry", "clear"]);
+    run_json(clear);
+    assert!(!temp.path().join("telemetry/events.jsonl").exists());
+    assert!(!temp.path().join("telemetry/metrics.yaml").exists());
+}
+
+#[test]
+fn telemetry_hook_records_a_hook_event() {
+    let temp = TempDir::new("telemetry-hook-event");
+
+    let mut hook = atlas(temp.path());
+    hook.args([
+        "telemetry",
+        "hook",
+        "--name",
+        "atlas-index",
+        "--event",
+        "SessionStart",
+        "--outcome",
+        "skipped",
+        "--reason",
+        "already_done",
+    ]);
+    assert_eq!(run_json(hook)["recorded"], true);
+
+    let events = std::fs::read_to_string(temp.path().join("telemetry/events.jsonl"))
+        .expect("telemetry journal should exist");
+    assert!(events.contains(r#""kind":"hook""#));
+    assert!(events.contains(r#""name":"atlas-index""#));
+    assert!(events.contains(r#""outcome":"skipped""#));
+    assert!(events.contains(r#""reason":"already_done""#));
+
+    let mut metrics = atlas(temp.path());
+    metrics.args(["telemetry", "metrics"]);
+    let metrics = run_json(metrics);
+    assert_eq!(metrics["all_time"]["hooks"]["atlas-index"], 1);
+
+    let mut disable = atlas(temp.path());
+    disable.args(["telemetry", "disable"]);
+    run_json(disable);
+    std::fs::remove_file(temp.path().join("telemetry/events.jsonl"))
+        .expect("journal should be removable for the disabled check");
+
+    let mut hook_disabled = atlas(temp.path());
+    hook_disabled.args([
+        "telemetry",
+        "hook",
+        "--name",
+        "atlas-index",
+        "--event",
+        "SessionStart",
+        "--outcome",
+        "skipped",
+        "--reason",
+        "already_done",
+    ]);
+    assert_eq!(run_json(hook_disabled)["recorded"], false);
+    assert!(!temp.path().join("telemetry/events.jsonl").exists());
 }

@@ -1,0 +1,19 @@
+id: K-000012
+title: Every CLI command except telemetry subcommands is journaled
+type: decision
+confidence: high
+summary: Command events count success and failure; telemetry subcommands are skipped so observing metrics cannot recreate the journal.
+details: run_logged wraps every CLI command except Commands::Telemetry. Success and failure both append a kind=command event and increment commands.<name>. Failures set ok=false, error_kind from the AtlasError variant name, and command_errors. Optional ATLAS_TELEMETRY_SOURCE and ATLAS_TELEMETRY_HOOK_EVENT labels are kept only when they match [A-Za-z0-9:._-] and are at most 64 characters. atlas telemetry hook records kind=hook events for host hook lifecycle without writing prompt text.
+tags:
+- telemetry
+- cli
+- privacy
+sources:
+- src/cli.rs
+- src/telemetry.rs
+- tests/cli_write.rs
+links:
+- K-000010
+- K-000011
+- ai/K-000082
+updated_at: 2026-08-28

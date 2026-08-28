@@ -50,6 +50,14 @@ pub struct TelemetryCounters {
     pub misleading_feedback: u64,
     pub stale_feedback: u64,
     pub missing_feedback: u64,
+    #[serde(default)]
+    pub commands: std::collections::BTreeMap<String, u64>,
+    #[serde(default)]
+    pub command_errors: u64,
+    #[serde(default)]
+    pub sources: std::collections::BTreeMap<String, u64>,
+    #[serde(default)]
+    pub hooks: std::collections::BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -65,6 +73,28 @@ pub enum FeedbackVerdict {
     Misleading,
     Stale,
     Missing,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[clap(rename_all = "snake_case")]
+pub enum HookOutcome {
+    Injected,
+    Skipped,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[clap(rename_all = "snake_case")]
+pub enum HookSkipReason {
+    AlreadyDone,
+    MissingPython,
+    ContextFailed,
+    NoOrgProject,
+    IndexFailed,
+    EmptyIndex,
+    NoAddendumMatch,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,13 +118,44 @@ enum TelemetryEvent<'a> {
         verdict: FeedbackVerdict,
         note: Option<&'a str>,
     },
+    Command {
+        timestamp: String,
+        command: &'a str,
+        ok: bool,
+        duration_ms: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error_kind: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        hook_event: Option<&'a str>,
+    },
+    Hook {
+        timestamp: String,
+        name: &'a str,
+        event: &'a str,
+        outcome: HookOutcome,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<HookSkipReason>,
+        injected_lines: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
-enum MetricsUpdate {
-    Search { total_results: usize },
+enum MetricsUpdate<'a> {
+    Search {
+        total_results: usize,
+    },
     Get,
     Feedback(FeedbackVerdict),
+    Command {
+        name: &'a str,
+        ok: bool,
+        source: Option<&'a str>,
+    },
+    Hook {
+        name: &'a str,
+    },
 }
 
 pub fn status() -> Result<TelemetryStatus, AtlasError> {
@@ -186,9 +247,86 @@ pub fn record_feedback(
     Ok(FeedbackResult { recorded: true })
 }
 
+pub fn record_command(
+    command: &str,
+    ok: bool,
+    duration_ms: u64,
+    error_kind: Option<&str>,
+    source: Option<&str>,
+    hook_event: Option<&str>,
+) -> Result<bool, AtlasError> {
+    if !load_config()?.enabled {
+        return Ok(false);
+    }
+    let source = source.and_then(sanitize_label);
+    let hook_event = hook_event.and_then(sanitize_label);
+    append_event(
+        &TelemetryEvent::Command {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            command,
+            ok,
+            duration_ms,
+            error_kind,
+            source: source.as_deref(),
+            hook_event: hook_event.as_deref(),
+        },
+        MetricsUpdate::Command {
+            name: command,
+            ok,
+            source: source.as_deref(),
+        },
+    )?;
+    Ok(true)
+}
+
+pub fn record_hook(
+    name: &str,
+    event: &str,
+    outcome: HookOutcome,
+    reason: Option<HookSkipReason>,
+    injected_lines: usize,
+) -> Result<FeedbackResult, AtlasError> {
+    if !load_config()?.enabled {
+        return Ok(FeedbackResult { recorded: false });
+    }
+    let name = sanitize_label(name).ok_or_else(invalid_hook_label)?;
+    let event = sanitize_label(event).ok_or_else(invalid_hook_label)?;
+    append_event(
+        &TelemetryEvent::Hook {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            name: &name,
+            event: &event,
+            outcome,
+            reason,
+            injected_lines,
+        },
+        MetricsUpdate::Hook { name: &name },
+    )?;
+    Ok(FeedbackResult { recorded: true })
+}
+
+fn invalid_hook_label() -> AtlasError {
+    AtlasError::Validation(
+        "telemetry hook name and event must match [A-Za-z0-9:._-] and be at most 64 characters."
+            .to_string(),
+    )
+}
+
+pub(crate) fn sanitize_label(raw: &str) -> Option<String> {
+    if (1..=64).contains(&raw.len())
+        && raw
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '.' | '_' | '-'))
+    {
+        Some(raw.to_string())
+    } else {
+        None
+    }
+}
+
 fn append_event(
     event: &TelemetryEvent<'_>,
-    metrics_update: MetricsUpdate,
+    metrics_update: MetricsUpdate<'_>,
 ) -> Result<(), AtlasError> {
     let path = events_path()?;
     if let Some(parent) = path.parent() {
@@ -225,7 +363,7 @@ fn trim_journal(path: &Path, max_bytes: usize) -> Result<(), AtlasError> {
     Ok(())
 }
 
-fn save_metrics(metrics_update: MetricsUpdate) -> Result<(), AtlasError> {
+fn save_metrics(metrics_update: MetricsUpdate<'_>) -> Result<(), AtlasError> {
     let mut metrics = load_metrics()?;
     update_metrics(&mut metrics, Utc::now().date_naive(), metrics_update);
     let path = metrics_path()?;
@@ -236,7 +374,7 @@ fn save_metrics(metrics_update: MetricsUpdate) -> Result<(), AtlasError> {
     Ok(())
 }
 
-fn update_metrics(metrics: &mut TelemetryMetrics, day: NaiveDate, update: MetricsUpdate) {
+fn update_metrics(metrics: &mut TelemetryMetrics, day: NaiveDate, update: MetricsUpdate<'_>) {
     let daily = metrics.daily.entry(day.to_string()).or_default();
     apply_metric_update(&mut metrics.all_time, update);
     apply_metric_update(daily, update);
@@ -245,7 +383,7 @@ fn update_metrics(metrics: &mut TelemetryMetrics, day: NaiveDate, update: Metric
     metrics.daily.retain(|date, _| date >= &cutoff);
 }
 
-fn apply_metric_update(counters: &mut TelemetryCounters, update: MetricsUpdate) {
+fn apply_metric_update(counters: &mut TelemetryCounters, update: MetricsUpdate<'_>) {
     match update {
         MetricsUpdate::Search { total_results } => {
             counters.searches += 1;
@@ -259,6 +397,18 @@ fn apply_metric_update(counters: &mut TelemetryCounters, update: MetricsUpdate) 
         MetricsUpdate::Feedback(FeedbackVerdict::Misleading) => counters.misleading_feedback += 1,
         MetricsUpdate::Feedback(FeedbackVerdict::Stale) => counters.stale_feedback += 1,
         MetricsUpdate::Feedback(FeedbackVerdict::Missing) => counters.missing_feedback += 1,
+        MetricsUpdate::Command { name, ok, source } => {
+            *counters.commands.entry(name.to_string()).or_default() += 1;
+            if !ok {
+                counters.command_errors += 1;
+            }
+            if let Some(source) = source {
+                *counters.sources.entry(source.to_string()).or_default() += 1;
+            }
+        }
+        MetricsUpdate::Hook { name } => {
+            *counters.hooks.entry(name.to_string()).or_default() += 1;
+        }
     }
 }
 
@@ -370,5 +520,64 @@ mod tests {
         assert_eq!(counters.misleading_feedback, 1);
         assert_eq!(counters.stale_feedback, 1);
         assert_eq!(counters.missing_feedback, 1);
+    }
+
+    #[test]
+    fn apply_metric_update_counts_commands_errors_sources_and_hooks() {
+        let mut counters = TelemetryCounters::default();
+
+        apply_metric_update(
+            &mut counters,
+            MetricsUpdate::Command {
+                name: "index",
+                ok: true,
+                source: Some("hook:atlas-index"),
+            },
+        );
+        apply_metric_update(
+            &mut counters,
+            MetricsUpdate::Command {
+                name: "index",
+                ok: false,
+                source: None,
+            },
+        );
+        apply_metric_update(
+            &mut counters,
+            MetricsUpdate::Hook {
+                name: "atlas-index",
+            },
+        );
+
+        assert_eq!(counters.commands.get("index"), Some(&2));
+        assert_eq!(counters.command_errors, 1);
+        assert_eq!(counters.sources.get("hook:atlas-index"), Some(&1));
+        assert_eq!(counters.hooks.get("atlas-index"), Some(&1));
+    }
+
+    #[test]
+    fn prechange_counters_deserialize_with_empty_command_maps() {
+        let counters: TelemetryCounters = serde_yaml::from_str(
+            "searches: 1\nzero_result_searches: 0\nresults_matched: 2\ngets: 3\nhelpful_feedback: 0\nmisleading_feedback: 0\nstale_feedback: 0\nmissing_feedback: 0\n",
+        )
+        .expect("pre-change counters document should load");
+
+        assert_eq!(counters.searches, 1);
+        assert_eq!(counters.gets, 3);
+        assert!(counters.commands.is_empty());
+        assert_eq!(counters.command_errors, 0);
+        assert!(counters.sources.is_empty());
+        assert!(counters.hooks.is_empty());
+    }
+
+    #[test]
+    fn sanitize_label_rejects_spaces_slashes_and_long_strings() {
+        assert_eq!(
+            sanitize_label("hook:atlas-index").as_deref(),
+            Some("hook:atlas-index")
+        );
+        assert_eq!(sanitize_label("bad source"), None);
+        assert_eq!(sanitize_label("hook/atlas-index"), None);
+        assert_eq!(sanitize_label(&"a".repeat(65)), None);
     }
 }

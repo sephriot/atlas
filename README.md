@@ -219,7 +219,7 @@ This creates:
 
 Atlas records local telemetry by default under `~/.atlas/telemetry/`. It never sends this data to a remote service. When `--storage` or `ATLAS_STORAGE` is set, telemetry uses that storage root instead.
 
-Atlas keeps detailed events in `events.jsonl` up to 10 MiB. It also updates privacy-safe counters in `metrics.yaml`: all-time totals and daily buckets for the last 90 days. Counters include searches, zero-result searches, total matches, reads, and feedback verdicts. Events record search result counts and IDs, atom IDs read with `get`, and explicit feedback. They do not record raw search text, atom contents, source paths, or stdin input. A feedback note is stored only when the caller supplies one.
+Atlas keeps detailed events in `events.jsonl` up to 10 MiB. It also updates privacy-safe counters in `metrics.yaml`: all-time totals and daily buckets for the last 90 days. Counters include searches, zero-result searches, total matches, reads, feedback verdicts, per-command counts, command errors, caller sources, and hook outcomes. Every CLI command except `atlas telemetry *` appends a `command` event and increments `commands.<name>`. Failed commands set `ok: false` plus `error_kind` and increment `command_errors`. Hook lifecycle events from `atlas-index` use `kind: hook`. Events record search result counts and IDs, atom IDs read with `get`, and explicit feedback. They do not record raw search text, atom contents, source paths, or stdin input. A feedback note is stored only when the caller supplies one.
 
 ```bash
 # Check the current state and journal location
@@ -234,6 +234,9 @@ atlas telemetry disable
 
 # Remove all local telemetry data
 atlas telemetry clear
+
+# Record a hook lifecycle event
+atlas telemetry hook --name atlas-index --event SessionStart --outcome injected --injected-lines 12
 
 # Record feedback using the search_id returned by `atlas search`
 atlas feedback S-123 --result sephriot/atlas/K-000001 --verdict helpful
@@ -250,6 +253,8 @@ atlas feedback --result sephriot/atlas/K-000001 --verdict misleading
 | `ATLAS_PROJECT` | Override project |
 | `ATLAS_CWD` | Override working directory for git context detection |
 | `ATLAS_STORAGE` | Override storage root, default `~/.atlas` |
+| `ATLAS_TELEMETRY_SOURCE` | Caller tag on command events, e.g. `hook:atlas-index` |
+| `ATLAS_TELEMETRY_HOOK_EVENT` | Host event on command events, e.g. `SessionStart` or `UserPromptSubmit` |
 
 ## Development
 

@@ -2,7 +2,8 @@ id: K-000011
 title: Telemetry keeps bounded detail and aggregate metrics
 type: decision
 confidence: high
-summary: Atlas retains 10 MiB of recent events, 90 daily metric buckets, and all-time redacted counters.
+summary: Atlas retains 10 MiB of events, 90 daily buckets, and redacted all-time counters including commands and hooks.
+details: Counters now also include per-command counts, command_errors, caller sources, and hook outcomes. Existing metrics.yaml files without those keys deserialize as empty maps and zero errors. Command events store ok, duration_ms, and a short error_kind; they do not store query text, atom bodies, paths, or Display error messages. atlas telemetry subcommands are not recorded, so metrics and clear cannot recreate the journal they observe.
 tags:
 - telemetry
 - retention
@@ -12,4 +13,5 @@ sources:
 - src/cli.rs
 links:
 - K-000010
-updated_at: 2026-08-27
+- K-000012
+updated_at: 2026-08-28
